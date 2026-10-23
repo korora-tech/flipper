@@ -1,0 +1,37 @@
+version: 1
+
+appearance:
+  theme: system
+  dim: true
+  width: 760
+
+routing:
+  mode: picker
+  default_profile: null
+  suspended: false
+  unwrap_redirects: true
+
+rules:
+  # First matching rule wins. Use an exact profile ID or a unique email selector.
+  # Profile IDs stay stable when a Chrome profile is renamed.
+  # Picker rules act as exceptions to a broader open rule.
+  - name: Choose for admin
+    domains: [example.com]
+    paths: [/admin]
+    action: picker
+
+  - name: Company links
+    domains: [example.com]
+    action: open
+    profile: "email:you@example.com"
+
+  # File extension rules accept pdf, .pdf, or ext:pdf.
+  - name: Documents
+    extensions: [pdf, docx]
+    action: picker
+
+browsers:
+  hidden: []
+  order: []
+
+custom_browsers: []

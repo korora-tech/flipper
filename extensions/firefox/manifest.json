@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "Open with Flipper",
+  "version": "0.1.0",
+  "description": "Open the current link in a chosen Flipper browser profile.",
+  "permissions": ["contextMenus", "nativeMessaging"],
+  "background": { "scripts": ["background.js"] },
+  "browser_specific_settings": {
+    "gecko": { "id": "flipper@korora.tech", "strict_min_version": "115.0" }
+  }
+}
