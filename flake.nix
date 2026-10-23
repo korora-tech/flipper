@@ -3,12 +3,26 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      runtimeLibraryPath = pkgs: pkgs.lib.makeLibraryPath (with pkgs; [ libxkbcommon vulkan-loader wayland ]);
-    in {
+      runtimeLibraryPath =
+        pkgs:
+        pkgs.lib.makeLibraryPath (
+          with pkgs;
+          [
+            libxkbcommon
+            vulkan-loader
+            wayland
+          ]
+        );
+    in
+    {
       packages = forAllSystems (pkgs: rec {
         flipper = pkgs.callPackage ./nix/package.nix { };
         default = flipper;
@@ -29,9 +43,29 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-          packages = with pkgs; [ cargo clippy rust-analyzer rustc rustfmt ];
+          packages = with pkgs; [
+            cargo
+            clippy
+            rust-analyzer
+            rustc
+            rustfmt
+          ];
           LD_LIBRARY_PATH = runtimeLibraryPath pkgs;
         };
+      });
+
+      checks = forAllSystems (pkgs: {
+        flipper = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+
+        rustfmt = pkgs.runCommand "flipper-rustfmt" { nativeBuildInputs = [ pkgs.rustfmt ]; } ''
+          rustfmt --check --edition 2024 ${./src}/main.rs
+          touch $out
+        '';
+
+        nixfmt = pkgs.runCommand "flipper-nixfmt" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
+          nixfmt --check ${./flake.nix} ${./nix/package.nix}
+          touch $out
+        '';
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);

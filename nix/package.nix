@@ -35,7 +35,10 @@ rustPlatform.buildRustPackage {
   cargoLock.lockFile = ../Cargo.lock;
   doCheck = false;
 
-  nativeBuildInputs = [ makeWrapper pkg-config ];
+  nativeBuildInputs = [
+    makeWrapper
+    pkg-config
+  ];
   buildInputs = [
     fontconfig
     freetype
@@ -58,7 +61,11 @@ rustPlatform.buildRustPackage {
     wrapProgram $out/bin/flipper \
       --prefix PATH : ${lib.makeBinPath [ xdg-utils ]} \
       --prefix LD_LIBRARY_PATH : ${
-        lib.makeLibraryPath [ libxkbcommon vulkan-loader wayland ]
+        lib.makeLibraryPath [
+          libxkbcommon
+          vulkan-loader
+          wayland
+        ]
       }
   '';
 
