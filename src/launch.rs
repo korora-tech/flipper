@@ -6,6 +6,14 @@ use std::process::{Command, Stdio};
 use crate::browsers::BrowserProfile;
 
 pub fn launch(profile: &BrowserProfile, url: &str) -> std::io::Result<()> {
+    let handoff;
+    let url = match profile.container {
+        Some(container) => {
+            handoff = container_url(container, url);
+            handoff.as_str()
+        }
+        None => url,
+    };
     let mut argv = profile.launch.clone();
     let mut replaced = false;
     for argument in &mut argv {
@@ -18,6 +26,16 @@ pub fn launch(profile: &BrowserProfile, url: &str) -> std::io::Result<()> {
         argv.push(url.to_owned());
     }
     launch_argv(&argv)
+}
+
+/// The Flipper Firefox add-on handles `ext+flipper:` and opens the URL in the
+/// container; Firefox has no command-line option for containers.
+fn container_url(container: u32, url: &str) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("container", &container.to_string())
+        .append_pair("url", url)
+        .finish();
+    format!("ext+flipper:{query}")
 }
 
 pub fn launch_argv(argv: &[String]) -> std::io::Result<()> {
