@@ -1,6 +1,7 @@
 //! Browser discovery from local profile metadata. No cookies, history, login
-//! databases, sessions, or profile preferences are read. Chromium's Local State
-//! and Firefox's profiles.ini are the only files opened by discovery.
+//! databases, sessions, or profile preferences are read. Chromium's Local State,
+//! Firefox's profiles.ini and, where the Flipper add-on is installed, a Firefox
+//! profile's containers.json are the only files opened by discovery.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,9 @@ pub struct BrowserProfile {
     pub icon_name: String,
     /// Shell-free argv template; URL insertion is an entire `{url}` argument.
     pub launch: Vec<String>,
+    /// Firefox container (userContextId); the URL is handed to the Flipper
+    /// add-on, which opens it in that container.
+    pub container: Option<u32>,
     pub hidden: bool,
     pub order: usize,
 }
@@ -118,6 +122,30 @@ const FIREFOX: &[Firefox] = &[
         flatpak: Some("org.mozilla.firefox"),
     },
     Firefox {
+        id: "firefox-beta",
+        name: "Firefox Beta",
+        commands: &["firefox-beta"],
+        directories: &[".mozilla/firefox"],
+        icon: "firefox-beta",
+        flatpak: None,
+    },
+    Firefox {
+        id: "firefox-devedition",
+        name: "Firefox Developer Edition",
+        commands: &["firefox-devedition", "firefox-developer-edition"],
+        directories: &[".mozilla/firefox"],
+        icon: "firefox-devedition",
+        flatpak: None,
+    },
+    Firefox {
+        id: "firefox-nightly",
+        name: "Firefox Nightly",
+        commands: &["firefox-nightly"],
+        directories: &[".mozilla/firefox"],
+        icon: "firefox-nightly",
+        flatpak: None,
+    },
+    Firefox {
         id: "firefox-esr",
         name: "Firefox ESR",
         commands: &["firefox-esr"],
@@ -190,17 +218,14 @@ pub fn discover(config: &Config) -> Vec<BrowserProfile> {
         } else {
             default_root.clone()
         };
-        if let Some(root) = root {
+        // Native data roots outlive uninstalled browsers; only list browsers
+        // that can actually be launched.
+        if let (Some(root), Some(command)) = (root, &command) {
             let metadata = root.join("Local State");
             let Some(user_data_dir) = root.to_str() else {
                 continue;
             };
-            let launch = vec![
-                command
-                    .clone()
-                    .unwrap_or_else(|| browser.commands[0].into()),
-                format!("--user-data-dir={user_data_dir}"),
-            ];
+            let launch = vec![command.clone(), format!("--user-data-dir={user_data_dir}")];
             // Preserve ordinary IDs; explicitly configured roots have their
             // own identity so an old routing target cannot select another root.
             let id = if default_root.as_ref() == Some(&root) {
@@ -208,14 +233,7 @@ pub fn discover(config: &Config) -> Vec<BrowserProfile> {
             } else {
                 root_identity(browser.id, &root)
             };
-            chromium_profiles(
-                browser,
-                &id,
-                &metadata,
-                launch,
-                command.is_some(),
-                &mut profiles,
-            );
+            chromium_profiles(browser, &id, &metadata, launch, true, &mut profiles);
         }
         if let (Some(home), Some(app)) = (&home, browser.flatpak) {
             let metadata = home
@@ -263,9 +281,9 @@ pub fn discover(config: &Config) -> Vec<BrowserProfile> {
     for browser in FIREFOX {
         let command = executable(browser.commands);
         if let Some(home) = &home {
-            // ESR shares Mozilla's profile root; don't duplicate normal Firefox
-            // profiles under an ESR identity unless ESR is actually available.
-            if browser.id != "firefox-esr" || command.is_some() {
+            // Firefox editions share Mozilla's profile root, and profile roots
+            // outlive uninstalled browsers; only list editions that are installed.
+            if let Some(command) = &command {
                 let roots: Vec<_> = browser
                     .directories
                     .iter()
@@ -276,12 +294,8 @@ pub fn discover(config: &Config) -> Vec<BrowserProfile> {
                         browser,
                         browser.id,
                         root,
-                        vec![
-                            command
-                                .clone()
-                                .unwrap_or_else(|| browser.commands[0].into()),
-                        ],
-                        command.is_some(),
+                        vec![command.clone()],
+                        true,
                         &mut profiles,
                     );
                 }
@@ -340,6 +354,7 @@ pub fn discover(config: &Config) -> Vec<BrowserProfile> {
             email: browser.email.clone(),
             icon_name: browser.icon_name.clone(),
             launch,
+            container: None,
             hidden: false,
             order: 0,
         });
@@ -435,6 +450,7 @@ fn chromium_profiles(
                 email: string_field(info, "user_name"),
                 icon_name: browser.icon.into(),
                 launch,
+                container: None,
                 hidden: false,
                 order: 0,
             });
@@ -451,6 +467,7 @@ fn chromium_profiles(
             email: None,
             icon_name: browser.icon.into(),
             launch,
+            container: None,
             hidden: false,
             order: 0,
         });
@@ -485,6 +502,7 @@ fn firefox_profiles(
                 email: None,
                 icon_name: browser.icon.into(),
                 launch,
+                container: None,
                 hidden: false,
                 order: 0,
             });
@@ -541,21 +559,84 @@ fn firefox_profiles(
             "--new-tab".into(),
             "{url}".into(),
         ]);
+        let profile_name = get("Name").filter(|name| !name.is_empty()).unwrap_or(path);
         profiles.push(BrowserProfile {
             id: format!("{id}:{path}"),
             browser_id: id.into(),
             browser_name: browser.name.into(),
-            profile_name: get("Name")
-                .filter(|name| !name.is_empty())
-                .unwrap_or(path)
-                .into(),
+            profile_name: profile_name.into(),
             email: None,
             icon_name: browser.icon.into(),
-            launch,
+            launch: launch.clone(),
+            container: None,
             hidden: false,
             order: 0,
         });
+        // Firefox cannot open a container from the command line; only offer
+        // containers where the Flipper add-on can receive the hand-off.
+        let profile_dir = Path::new(profile_path);
+        if !profile_dir.join("extensions").join(ADDON_XPI).is_file() {
+            continue;
+        }
+        for (container, name) in firefox_containers(profile_dir) {
+            profiles.push(BrowserProfile {
+                id: format!("{id}:{path}#container-{container}"),
+                browser_id: id.into(),
+                browser_name: browser.name.into(),
+                profile_name: format!("{profile_name} · {name}"),
+                email: None,
+                icon_name: browser.icon.into(),
+                launch: launch.clone(),
+                container: Some(container),
+                hidden: false,
+                order: 0,
+            });
+        }
     }
+}
+
+const ADDON_XPI: &str = "flipper@korora.tech.xpi";
+
+/// Public containers from a profile's containers.json. Firefox's built-in
+/// containers may omit `name` and are labelled from `l10nId` or their ID.
+fn firefox_containers(profile: &Path) -> Vec<(u32, String)> {
+    let Some(state) = read_metadata(&profile.join("containers.json"))
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(identities) = state.get("identities").and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+    identities
+        .iter()
+        .filter(|identity| identity.get("public").and_then(|value| value.as_bool()) == Some(true))
+        .filter_map(|identity| {
+            let container = identity
+                .get("userContextId")?
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .filter(|id| *id != 0)?;
+            let builtin = match identity.get("l10nId").and_then(|value| value.as_str()) {
+                Some("user-context-personal") => Some(1),
+                Some("user-context-work") => Some(2),
+                Some("user-context-banking") => Some(3),
+                Some("user-context-shopping") => Some(4),
+                _ => None,
+            };
+            let name = string_field(identity, "name").or_else(|| {
+                match builtin.unwrap_or(container) {
+                    1 => Some("Personal"),
+                    2 => Some("Work"),
+                    3 => Some("Banking"),
+                    4 => Some("Shopping"),
+                    _ => None,
+                }
+                .map(str::to_owned)
+            })?;
+            Some((container, name))
+        })
+        .collect()
 }
 
 /// Metadata is small in normal installations; bound reads to avoid loading an

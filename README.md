@@ -13,7 +13,7 @@ Flipper uses a GPUI interface and YAML configuration.
 | Default-browser handoff and restore | Register and restore the user's previous MIME handlers | `flipper --register`, `flipper --uninstall` |
 | Browser/profile picker | Searchable profile cards with icons, account email, number shortcuts, Escape | Picker |
 | Chromium profile detection | Chrome, Edge, Brave, Vivaldi, Opera, Chromium; include native and sandboxed data roots | Auto-detected |
-| Firefox profile detection | Firefox, Zen, Floorp, LibreWolf, Waterfox, Mullvad | Auto-detected |
+| Firefox profile detection | Firefox (Beta, Developer Edition, Nightly, ESR), Zen, Floorp, LibreWolf, Waterfox, Mullvad; installed browsers only | Auto-detected |
 | Email profile selection | Chrome Local State `profile.info_cache.*.user_name`; exact, unique matches only | YAML rule selector and picker labels |
 | Always and once | Open once or save a domain/path rule for future links | Picker actions |
 | Rules | Domain, path, wildcard, exceptions, order, fallback and temporary suspension | YAML and settings |
@@ -24,13 +24,15 @@ Flipper uses a GPUI interface and YAML configuration.
 | Import/export | Validate and atomically import/export YAML | CLI |
 | Safety check | Explicitly open Google's Transparency Report for the destination | Picker action |
 | Context-menu extension | Chrome and Firefox extensions backed by a native messaging host | `extensions/` |
-| Firefox containers | Let Firefox's own Multi-Account Containers site assignments continue to apply | Native Firefox behavior |
+| Firefox containers | Pick a container per link; Multi-Account Containers site assignments still apply | Picker, with the Firefox extension installed in that profile |
 
 The implementation is split into a GPUI front end and platform-independent
 configuration, discovery, URL preparation, routing, and launch modules. It
 does not keep link history or send telemetry. Chrome account labels are read
-from Chromium's local `Local State` profile metadata only; cookies, token
-stores, history, and browsing databases are not read. An email selector must
+from Chromium's local `Local State` profile metadata only, and Firefox
+containers from a profile's `containers.json` when the Flipper extension is
+installed there; cookies, token stores, history, and browsing databases are
+not read. An email selector must
 match exactly one profile; duplicate or missing emails fall back to the picker.
 
 ## Layer-shell support
@@ -56,6 +58,11 @@ The extension sources are in `extensions/chrome` and `extensions/firefox`.
 Load the extension, then run `flipper --install-native-host chrome EXTENSION_ID`
 or `flipper --install-native-host firefox flipper@korora.tech`. Chrome's ID is
 shown at `chrome://extensions` after loading the unpacked extension.
+
+Firefox cannot open a container from the command line, so the Firefox
+extension also handles `ext+flipper:` links: Flipper launches Firefox with one,
+and the extension opens the URL in the chosen container. Container choices
+appear only for profiles where the extension is installed.
 
 ## Build
 
