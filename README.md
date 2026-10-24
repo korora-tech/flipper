@@ -35,8 +35,9 @@ match exactly one profile; duplicate or missing emails fall back to the picker.
 
 ## Layer-shell support
 
-The picker uses a GPUI layer-shell surface on Wayland compositors that support
-the protocol. On X11, and when a Wayland compositor rejects layer-shell, it
+The link selector uses a GPUI layer-shell surface on Wayland compositors that
+support the protocol. The main app and settings open as normal GPUI windows.
+On X11, and when a Wayland compositor rejects layer-shell, the link selector
 falls back to a normal GPUI window. Compositor focus and placement still need
 verification in a real session.
 

@@ -81,8 +81,8 @@ pub fn open(
                 Theme::Light => UiTheme::change(ThemeMode::Light, None, cx),
                 Theme::Dark => UiTheme::change(ThemeMode::Dark, None, cx),
             }
-            let layer = is_wayland_session();
-            let options = window_options(&appearance, layer);
+            let link_selector_layer = url.is_some() && !settings && is_wayland_session();
+            let options = window_options(&appearance, link_selector_layer);
             let config_layer = config.clone();
             let profiles_layer = profiles.clone();
             let url_layer = url.clone();
@@ -102,7 +102,7 @@ pub fn open(
                 });
                 cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
             });
-            if opened.is_err() && layer {
+            if opened.is_err() && link_selector_layer {
                 let fallback = window_options(&appearance, false);
                 let fallback_opened = cx.open_window(fallback, move |window, cx| {
                     let view = cx.new(|cx| {
