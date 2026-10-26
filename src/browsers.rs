@@ -108,6 +108,9 @@ struct Firefox {
     name: &'static str,
     commands: &'static [&'static str],
     directories: &'static [&'static str],
+    /// Roots under `$XDG_CONFIG_HOME`, checked after `directories`: Firefox
+    /// uses the XDG root only when the legacy one does not exist.
+    xdg_directories: &'static [&'static str],
     icon: &'static str,
     flatpak: Option<&'static str>,
 }
@@ -118,6 +121,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Firefox",
         commands: &["firefox"],
         directories: &[".mozilla/firefox"],
+        xdg_directories: &["mozilla/firefox"],
         icon: "firefox",
         flatpak: Some("org.mozilla.firefox"),
     },
@@ -126,6 +130,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Firefox Beta",
         commands: &["firefox-beta"],
         directories: &[".mozilla/firefox"],
+        xdg_directories: &["mozilla/firefox"],
         icon: "firefox-beta",
         flatpak: None,
     },
@@ -134,6 +139,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Firefox Developer Edition",
         commands: &["firefox-devedition", "firefox-developer-edition"],
         directories: &[".mozilla/firefox"],
+        xdg_directories: &["mozilla/firefox"],
         icon: "firefox-devedition",
         flatpak: None,
     },
@@ -142,6 +148,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Firefox Nightly",
         commands: &["firefox-nightly"],
         directories: &[".mozilla/firefox"],
+        xdg_directories: &["mozilla/firefox"],
         icon: "firefox-nightly",
         flatpak: None,
     },
@@ -150,6 +157,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Firefox ESR",
         commands: &["firefox-esr"],
         directories: &[".mozilla/firefox"],
+        xdg_directories: &["mozilla/firefox"],
         icon: "firefox-esr",
         flatpak: None,
     },
@@ -158,6 +166,7 @@ const FIREFOX: &[Firefox] = &[
         name: "LibreWolf",
         commands: &["librewolf"],
         directories: &[".librewolf"],
+        xdg_directories: &[],
         icon: "librewolf",
         flatpak: Some("io.gitlab.librewolf-community"),
     },
@@ -166,6 +175,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Floorp",
         commands: &["floorp"],
         directories: &[".floorp"],
+        xdg_directories: &[],
         icon: "floorp",
         flatpak: Some("one.ablaze.floorp"),
     },
@@ -174,6 +184,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Zen",
         commands: &["zen", "zen-browser"],
         directories: &[".zen"],
+        xdg_directories: &[],
         icon: "zen-browser",
         flatpak: Some("app.zen_browser.zen"),
     },
@@ -182,6 +193,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Waterfox",
         commands: &["waterfox", "waterfox-current"],
         directories: &[".waterfox"],
+        xdg_directories: &[],
         icon: "waterfox",
         flatpak: Some("net.waterfox.waterfox"),
     },
@@ -190,6 +202,7 @@ const FIREFOX: &[Firefox] = &[
         name: "Mullvad Browser",
         commands: &["mullvad-browser", "mullvadbrowser"],
         directories: &[".mullvad/mullvadbrowser", ".mullvad", ".mullvad-browser"],
+        xdg_directories: &[],
         icon: "mullvad-browser",
         flatpak: Some("net.mullvad.MullvadBrowser"),
     },
@@ -288,6 +301,12 @@ pub fn discover(config: &Config) -> Vec<BrowserProfile> {
                     .directories
                     .iter()
                     .map(|directory| home.join(directory))
+                    .chain(config_home.iter().flat_map(|config_home| {
+                        browser
+                            .xdg_directories
+                            .iter()
+                            .map(|directory| config_home.join(directory))
+                    }))
                     .collect();
                 if let Some(root) = preferred_firefox_root(&roots) {
                     firefox_profiles(
@@ -301,10 +320,17 @@ pub fn discover(config: &Config) -> Vec<BrowserProfile> {
                 }
             }
             if let Some(app) = browser.flatpak {
+                let app_root = home.join(".var/app").join(app);
                 let roots: Vec<_> = browser
                     .directories
                     .iter()
-                    .map(|directory| home.join(".var/app").join(app).join(directory))
+                    .map(|directory| app_root.join(directory))
+                    .chain(
+                        browser
+                            .xdg_directories
+                            .iter()
+                            .map(|directory| app_root.join("config").join(directory)),
+                    )
                     .collect();
                 if let Some(root) = preferred_firefox_root(&roots) {
                     firefox_profiles(
