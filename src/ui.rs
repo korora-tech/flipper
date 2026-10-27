@@ -1,11 +1,10 @@
-//! GPUI picker and settings surface.
+//! GPUI link selector surface.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use gpui_kit::base::Root;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::theme::{Theme as UiTheme, ThemeMode};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::layer_shell::{Anchor, KeyboardInteractivity, Layer, LayerShellOptions};
@@ -13,8 +12,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::browsers::BrowserProfile;
-use crate::config::{self, Config, RoutingMode, Rule, RuleAction, Theme};
-use crate::{config_io, launch, registration, urls::PreparedUrl};
+use crate::config::{self, Config, Rule, RuleAction, Theme};
+use crate::{app_path, config_io, launch, urls::PreparedUrl};
 
 actions!(
     flipper,
@@ -66,7 +65,6 @@ pub fn open(
     profiles: Vec<BrowserProfile>,
     url: Option<PreparedUrl>,
     warning: Option<String>,
-    settings: bool,
 ) -> Result<(), String> {
     let appearance = config.appearance.clone();
     let error = Arc::new(Mutex::new(None));
@@ -76,18 +74,28 @@ pub fn open(
         .run(move |cx| {
             gpui_kit::init(cx);
             bind_keys(cx);
-            match appearance.theme {
-                Theme::System => UiTheme::sync_system_appearance(None, cx),
-                Theme::Light => UiTheme::change(ThemeMode::Light, None, cx),
-                Theme::Dark => UiTheme::change(ThemeMode::Dark, None, cx),
-            }
-            let link_selector_layer = url.is_some() && !settings && is_wayland_session();
-            let options = window_options(&appearance, link_selector_layer);
+            apply_theme(appearance.theme, cx);
+            let Some(url) = url else {
+                let opened = cx.open_window(crate::settings::window_options(cx), |window, cx| {
+                    let view = cx.new(|cx| {
+                        crate::settings::SettingsView::new(config, profiles, warning, window, cx)
+                    });
+                    cx.new(|cx| Root::new(view, window, cx))
+                });
+                if let Err(open_error) = opened {
+                    *error_from_app.lock().expect("UI error lock poisoned") =
+                        Some(format!("could not open settings window: {open_error}"));
+                    cx.quit();
+                }
+                return;
+            };
+            let url = Some(url);
+            let layer = is_wayland_session();
+            let options = window_options(&appearance, layer);
             let config_layer = config.clone();
             let profiles_layer = profiles.clone();
             let url_layer = url.clone();
             let warning_layer = warning.clone();
-            let settings_layer = settings;
             let opened = cx.open_window(options, move |window, cx| {
                 let view = cx.new(|cx| {
                     PickerView::new(
@@ -95,19 +103,17 @@ pub fn open(
                         profiles_layer,
                         url_layer,
                         warning_layer,
-                        settings_layer,
                         window,
                         cx,
                     )
                 });
                 cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
             });
-            if opened.is_err() && link_selector_layer {
+            if opened.is_err() && layer {
                 let fallback = window_options(&appearance, false);
                 let fallback_opened = cx.open_window(fallback, move |window, cx| {
-                    let view = cx.new(|cx| {
-                        PickerView::new(config, profiles, url, warning, settings, window, cx)
-                    });
+                    let view =
+                        cx.new(|cx| PickerView::new(config, profiles, url, warning, window, cx));
                     cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
                 });
                 if let Err(fallback_error) = fallback_opened {
@@ -125,6 +131,14 @@ pub fn open(
     match error.lock().expect("UI error lock poisoned").take() {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+pub fn apply_theme(theme: Theme, cx: &mut App) {
+    match theme {
+        Theme::System => UiTheme::sync_system_appearance(None, cx),
+        Theme::Light => UiTheme::change(ThemeMode::Light, None, cx),
+        Theme::Dark => UiTheme::change(ThemeMode::Dark, None, cx),
     }
 }
 
@@ -186,7 +200,6 @@ struct PickerView {
     scroll: UniformListScrollHandle,
     query: String,
     selected: usize,
-    settings: bool,
     status: Option<String>,
     warning: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -198,7 +211,6 @@ impl PickerView {
         profiles: Vec<BrowserProfile>,
         prepared: Option<PreparedUrl>,
         warning: Option<String>,
-        settings: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -223,7 +235,6 @@ impl PickerView {
             scroll: UniformListScrollHandle::new(),
             query: String::new(),
             selected: 0,
-            settings,
             status: warning.clone(),
             warning,
             _subscriptions: subscriptions,
@@ -400,168 +411,18 @@ impl PickerView {
         }
     }
 
-    fn toggle_settings(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings = !self.settings;
-        self.status = None;
-        cx.notify();
-    }
-
-    fn set_suspended(&mut self, cx: &mut Context<Self>) {
-        let desired = !self.config.routing.suspended;
-        self.update_config(|config| config.routing.suspended = desired, cx);
-    }
-
-    fn set_default(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self
-            .profiles
-            .iter()
-            .find(|profile| profile.id == id)
-            .is_some_and(|profile| profile.hidden)
-        {
-            self.status = Some("Unhide this profile before using it as the fallback.".into());
-            cx.notify();
-            return;
-        }
-        let id = id.to_owned();
-        self.update_config(
-            |config| {
-                config.routing.mode = RoutingMode::Always;
-                config.routing.default_profile = Some(id);
-            },
-            cx,
-        );
-    }
-
-    fn move_profile(&mut self, id: &str, direction: isize, cx: &mut Context<Self>) {
-        let id = id.to_owned();
-        let known_profiles = self
-            .profiles
-            .iter()
-            .map(|profile| (profile.id.clone(), profile.browser_id.clone()))
-            .collect::<Vec<_>>();
-        self.update_config(
-            |config| {
-                let mut order = Vec::new();
-                for entry in &config.browsers.order {
-                    let group_profiles = known_profiles
-                        .iter()
-                        .filter(|(_, browser_id)| browser_id == entry)
-                        .map(|(profile_id, _)| profile_id);
-                    let mut expanded = false;
-                    for profile_id in group_profiles {
-                        expanded = true;
-                        if !order.contains(profile_id) {
-                            order.push(profile_id.clone());
-                        }
-                    }
-                    if !expanded && !order.contains(entry) {
-                        order.push(entry.clone());
-                    }
-                }
-                for (profile_id, _) in &known_profiles {
-                    if !order.contains(profile_id) {
-                        order.push(profile_id.clone());
-                    }
-                }
-                config.browsers.order = order;
-                if let Some(index) = config.browsers.order.iter().position(|item| item == &id) {
-                    let target = (index as isize + direction)
-                        .clamp(0, config.browsers.order.len().saturating_sub(1) as isize)
-                        as usize;
-                    config.browsers.order.swap(index, target);
-                }
-            },
-            cx,
-        );
-    }
-
-    fn toggle_hidden(&mut self, id: &str, cx: &mut Context<Self>) {
-        let id = id.to_owned();
-        let browser_id = self
-            .profiles
-            .iter()
-            .find(|profile| profile.id == id)
-            .map(|profile| profile.browser_id.clone());
-        self.update_config(
-            |config| {
-                let hidden = config.browsers.hidden.iter().any(|entry| {
-                    entry == &id
-                        || browser_id
-                            .as_ref()
-                            .is_some_and(|browser_id| entry == browser_id)
-                });
-                if hidden {
-                    config
-                        .browsers
-                        .hidden
-                        .retain(|entry| entry != &id && Some(entry) != browser_id.as_ref());
-                } else {
-                    config.browsers.hidden.push(id.clone());
-                }
-            },
-            cx,
-        );
-    }
-
-    fn remove_rule(&mut self, rule: Rule, cx: &mut Context<Self>) {
-        self.update_config(
-            |config| {
-                if let Some(index) = config.rules.iter().position(|candidate| candidate == &rule) {
-                    config.rules.remove(index);
-                }
-            },
-            cx,
-        );
-    }
-
-    fn update_config(&mut self, edit: impl FnOnce(&mut Config), cx: &mut Context<Self>) {
-        match config_io::update(edit) {
-            Ok(config) => {
-                self.config = config;
-                self.profiles = crate::browsers::discover(&self.config);
-                self.status = Some("Configuration saved.".into());
-            }
-            Err(error) => self.status = Some(error),
-        }
-        cx.notify();
-    }
-
-    fn open_config(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = config::path() else {
-            self.status = Some("Could not locate the Flipper configuration path.".into());
-            cx.notify();
-            return;
-        };
-        if !path.exists() {
-            if let Err(error) = config_io::replace(&self.config) {
-                self.status = Some(error);
-                cx.notify();
-                return;
-            }
-        }
-        match std::process::Command::new("xdg-open").arg(&path).spawn() {
-            Ok(_) => cx.quit(),
+    fn open_settings(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let result = app_path::invoked().and_then(|exe| {
+            launch::launch_argv(&[exe.to_string_lossy().into_owned(), "--settings".into()])
+                .map_err(|error| error.to_string())
+        });
+        match result {
+            Ok(()) => cx.quit(),
             Err(error) => {
-                self.status = Some(format!("Could not open {}: {error}", path.display()));
+                self.status = Some(format!("Could not open settings: {error}"));
                 cx.notify();
             }
         }
-    }
-
-    fn register(&mut self, cx: &mut Context<Self>) {
-        self.status = Some(match registration::register() {
-            Ok(()) => "Flipper is now the default handler for web links.".into(),
-            Err(error) => error,
-        });
-        cx.notify();
-    }
-
-    fn unregister(&mut self, cx: &mut Context<Self>) {
-        self.status = Some(match registration::uninstall() {
-            Ok(()) => "Restored previous web handlers.".into(),
-            Err(error) => error,
-        });
-        cx.notify();
     }
 
     fn choose_safety_check(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -763,228 +624,6 @@ impl PickerView {
         row.into_any_element()
     }
 
-    fn settings_panel(&self, dark: bool, cx: &mut Context<Self>) -> AnyElement {
-        let mut body = v_flex().gap_3();
-        body = body.child(
-            h_flex()
-                .gap_3()
-                .items_center()
-                .child(self.button(
-                    "suspend-rules",
-                    if self.config.routing.suspended {
-                        "Resume rules"
-                    } else {
-                        "Suspend rules"
-                    },
-                    cx.listener(|this, _, _, cx| this.set_suspended(cx)),
-                    dark,
-                ))
-                .child(self.button(
-                    "fallback-mode",
-                    if self.config.routing.mode == RoutingMode::Always {
-                        "Fallback: Always"
-                    } else {
-                        "Fallback: Picker"
-                    },
-                    cx.listener(|this, _, _, cx| {
-                        let mode = if this.config.routing.mode == RoutingMode::Picker {
-                            RoutingMode::Always
-                        } else {
-                            RoutingMode::Picker
-                        };
-                        let fallback = if mode == RoutingMode::Always {
-                            let Some(selector) = this.config.routing.default_profile.as_deref() else {
-                                this.status = Some(
-                                    "Choose a fallback profile before enabling automatic routing."
-                                        .into(),
-                                );
-                                cx.notify();
-                                return;
-                            };
-                            match crate::routing::resolve_selector(selector, &this.profiles) {
-                                Ok(profile) if !profile.hidden => Some(selector.to_owned()),
-                                Ok(_) => {
-                                    this.status = Some(
-                                        "The configured fallback profile is hidden; choose a visible fallback first."
-                                            .into(),
-                                    );
-                                    cx.notify();
-                                    return;
-                                }
-                                Err(reason) => {
-                                    this.status = Some(format!(
-                                        "The configured fallback cannot be resolved: {reason}. Choose a fallback profile first."
-                                    ));
-                                    cx.notify();
-                                    return;
-                                }
-                            }
-                        } else {
-                            None
-                        };
-                        this.update_config(|config| {
-                            config.routing.mode = mode;
-                            if mode == RoutingMode::Always {
-                                config.routing.default_profile = fallback;
-                            }
-                        }, cx);
-                    }),
-                    dark,
-                ))
-                .child(self.button(
-                    "open-config",
-                    "Open YAML config",
-                    cx.listener(|this, _, _, cx| this.open_config(cx)),
-                    dark,
-                ))
-                .child(self.button(
-                    "register-default",
-                    "Register as default",
-                    cx.listener(|this, _, _, cx| this.register(cx)),
-                    dark,
-                ))
-                .child(self.button(
-                    "unregister-default",
-                    "Restore previous browser",
-                    cx.listener(|this, _, _, cx| this.unregister(cx)),
-                    dark,
-                )),
-        );
-
-        body = body.child(
-            div()
-                .text_color(theme_color(dark, 0x96a6be, 0x657386))
-                .text_sm()
-                .child(format!(
-                    "Config: {}",
-                    config::path().map_or_else(
-                        || "~/.config/flipper/config.yaml".into(),
-                        |path| path.display().to_string()
-                    )
-                )),
-        );
-        body = body.child(
-            div()
-                .text_color(theme_color(dark, 0xf1f5fa, 0x202b38))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child("Browser profiles"),
-        );
-        for profile in &self.profiles {
-            let id = profile.id.clone();
-            let is_hidden = profile.hidden;
-            let id_for_button = id.clone();
-            let id_for_up = id.clone();
-            let id_for_down = id.clone();
-            let email = profile.email.as_deref().unwrap_or(&profile.profile_name);
-            body = body.child(
-                h_flex()
-                    .w_full()
-                    .py_1()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .child(format!("{} · {}", profile.browser_name, email))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme_color(dark, 0x8e9db3, 0x68768a))
-                                    .child(id.clone()),
-                            ),
-                    )
-                    .child(self.button(
-                        format!("move-up-{id_for_up}"),
-                        "↑",
-                        cx.listener(move |this, _, _, cx| this.move_profile(&id_for_up, -1, cx)),
-                        dark,
-                    ))
-                    .child(self.button(
-                        format!("move-down-{id_for_down}"),
-                        "↓",
-                        cx.listener(move |this, _, _, cx| this.move_profile(&id_for_down, 1, cx)),
-                        dark,
-                    ))
-                    .child(self.button(
-                        format!("toggle-hidden-{id_for_button}"),
-                        if is_hidden { "Show" } else { "Hide" },
-                        cx.listener(move |this, _, _, cx| this.toggle_hidden(&id_for_button, cx)),
-                        dark,
-                    ))
-                    .child(self.button(
-                        format!("use-fallback-{id}"),
-                        "Use as fallback",
-                        cx.listener(move |this, _, _, cx| this.set_default(&id, cx)),
-                        dark,
-                    )),
-            );
-        }
-        body = body.child(
-            div()
-                .mt_2()
-                .text_color(theme_color(dark, 0xf1f5fa, 0x202b38))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child("Routing rules"),
-        );
-        if self.config.rules.is_empty() {
-            body = body.child(
-                div()
-                    .text_sm()
-                    .text_color(theme_color(dark, 0x8e9db3, 0x68768a))
-                    .child("No rules yet. Use Always from the picker to add one."),
-            );
-        }
-        for (index, rule) in self.config.rules.iter().enumerate() {
-            let rule_for_remove = rule.clone();
-            let label = rule.name.clone().unwrap_or_else(|| {
-                let patterns = rule
-                    .domains
-                    .iter()
-                    .chain(&rule.paths)
-                    .chain(&rule.patterns)
-                    .chain(&rule.extensions)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "{}: {patterns}",
-                    if rule.action == RuleAction::Picker {
-                        "Picker"
-                    } else {
-                        "Open"
-                    }
-                )
-            });
-            body = body.child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .text_color(theme_color(dark, 0xc6d0df, 0x445267))
-                            .child(label),
-                    )
-                    .child(self.button(
-                        format!("remove-rule-{index}"),
-                        "Remove",
-                        cx.listener(move |this, _, _, cx| {
-                            this.remove_rule(rule_for_remove.clone(), cx)
-                        }),
-                        dark,
-                    )),
-            );
-        }
-        div()
-            .id("settings-scroll")
-            .max_h(px(560.))
-            .min_h(px(0.))
-            .overflow_y_scrollbar()
-            .child(body)
-            .into_any_element()
-    }
-
     fn button(
         &self,
         id: impl Into<SharedString>,
@@ -1112,7 +751,7 @@ impl Render for PickerView {
                 .child(self.button(
                     "settings-toggle",
                     "Settings",
-                    cx.listener(Self::toggle_settings),
+                    cx.listener(Self::open_settings),
                     dark,
                 ))
                 .child(self.button(
@@ -1176,49 +815,43 @@ impl Render for PickerView {
                 ),
         );
 
-        if self.settings {
-            panel = panel.child(self.settings_panel(dark, cx));
-        } else {
-            panel = panel.child(list);
-            let selected_profile = visible
-                .get(self.selected)
-                .and_then(|index| self.profiles.get(*index));
-            let mut actions = h_flex().gap_2().items_center();
-            if let Some(profile) = selected_profile {
-                let index = visible[self.selected];
-                let id = profile.id.clone();
-                actions = actions
-                    .child(self.button(
-                        "always-rule",
-                        "Always",
-                        cx.listener(move |this, _, _, cx| {
-                            this.save_rule(index, RuleAction::Open, cx)
-                        }),
-                        dark,
-                    ))
-                    .child(self.button(
-                        "picker-rule",
-                        "Always ask",
-                        cx.listener(move |this, _, _, cx| {
-                            this.save_rule(index, RuleAction::Picker, cx)
-                        }),
-                        dark,
-                    ))
-                    .child(self.button(
-                        "safety-check",
-                        "Safety check",
-                        cx.listener(move |this, _, _, cx| {
-                            if let Some(profile_index) =
-                                this.profiles.iter().position(|profile| profile.id == id)
-                            {
-                                this.choose_safety_check(profile_index, cx);
-                            }
-                        }),
-                        dark,
-                    ));
-            }
-            panel = panel.child(actions);
+        panel = panel.child(list);
+        let selected_profile = visible
+            .get(self.selected)
+            .and_then(|index| self.profiles.get(*index));
+        let mut actions = h_flex().gap_2().items_center();
+        if let Some(profile) = selected_profile {
+            let index = visible[self.selected];
+            let id = profile.id.clone();
+            actions = actions
+                .child(self.button(
+                    "always-rule",
+                    "Always",
+                    cx.listener(move |this, _, _, cx| this.save_rule(index, RuleAction::Open, cx)),
+                    dark,
+                ))
+                .child(self.button(
+                    "picker-rule",
+                    "Always ask",
+                    cx.listener(move |this, _, _, cx| {
+                        this.save_rule(index, RuleAction::Picker, cx)
+                    }),
+                    dark,
+                ))
+                .child(self.button(
+                    "safety-check",
+                    "Safety check",
+                    cx.listener(move |this, _, _, cx| {
+                        if let Some(profile_index) =
+                            this.profiles.iter().position(|profile| profile.id == id)
+                        {
+                            this.choose_safety_check(profile_index, cx);
+                        }
+                    }),
+                    dark,
+                ));
         }
+        panel = panel.child(actions);
 
         if let Some(status) = self.status.as_deref() {
             panel = panel.child(

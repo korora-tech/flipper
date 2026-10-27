@@ -6,6 +6,7 @@ mod launch;
 mod native_host;
 mod registration;
 mod routing;
+mod settings;
 mod ui;
 mod urls;
 
@@ -17,8 +18,8 @@ use urls::PreparedUrl;
 const USAGE: &str = "Flipper — native Linux browser and profile picker
 
 Usage:
-  flipper [URL]                 Choose a browser/profile for a link
-  flipper --settings            Open Flipper settings
+  flipper URL                   Choose a browser/profile for a link
+  flipper [--settings]          Open Flipper settings
   flipper --register            Make Flipper the default web link handler
   flipper --uninstall           Restore prior web handlers and unregister
   flipper --suspend | --resume  Temporarily bypass or resume routing rules
@@ -68,13 +69,13 @@ fn run() -> Result<(), String> {
             );
             return Ok(());
         }
-        [flag] if flag == "--settings" => return show(None, true),
+        [flag] if flag == "--settings" => return show(None),
         [flag] if flag == "--export" => return export("-"),
         [flag, path] if flag == "--export" => return export(path),
         [flag, path] if flag == "--import" => return import(path),
         [url] if url.starts_with('-') => return Err(format!("unknown option {url:?}\n\n{USAGE}")),
-        [url] => return show(Some(url), false),
-        [] => return show(None, false),
+        [url] => return show(Some(url)),
+        [] => return show(None),
         _ => return Err(USAGE.into()),
     }
 }
@@ -86,7 +87,7 @@ fn load_config() -> (Config, Option<String>) {
     }
 }
 
-fn show(input: Option<&str>, settings: bool) -> Result<(), String> {
+fn show(input: Option<&str>) -> Result<(), String> {
     let (config, mut warning) = load_config();
     let profiles = browsers::discover(&config);
     let prepared = if let Some(input) = input {
@@ -118,7 +119,7 @@ fn show(input: Option<&str>, settings: bool) -> Result<(), String> {
         }
     }
 
-    ui::open(config, profiles, prepared, warning, settings)?;
+    ui::open(config, profiles, prepared, warning)?;
     Ok(())
 }
 

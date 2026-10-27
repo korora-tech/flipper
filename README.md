@@ -20,7 +20,7 @@ Flipper uses a GPUI interface and YAML configuration.
 | Redirect unwrapping | Nested Microsoft SafeLinks and Google redirect URLs | Before routing |
 | Destination cues | Show the effective destination and Office document type | Picker |
 | Browser management | Hide, reorder and add custom launch commands | YAML |
-| Settings and manual open | Inspect/edit config and open an arbitrary URL | Settings/Open view |
+| Settings and manual open | Routing, browsers, rules, appearance; open an arbitrary URL | `flipper` or `flipper --settings` |
 | Import/export | Validate and atomically import/export YAML | CLI |
 | Safety check | Explicitly open Google's Transparency Report for the destination | Picker action |
 | Context-menu extension | Chrome and Firefox extensions backed by a native messaging host | `extensions/` |
@@ -36,7 +36,8 @@ match exactly one profile; duplicate or missing emails fall back to the picker.
 ## Layer-shell support
 
 The link selector uses a GPUI layer-shell surface on Wayland compositors that
-support the protocol. The main app and settings open as normal GPUI windows.
+support the protocol. Running `flipper` without a URL opens settings in a
+normal application window.
 On X11, and when a Wayland compositor rejects layer-shell, the link selector
 falls back to a normal GPUI window. Compositor focus and placement still need
 verification in a real session.
