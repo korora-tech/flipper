@@ -15,7 +15,16 @@ const MIME_TYPES: [&str; 3] = [
     "text/html",
 ];
 
+/// Home Manager owns mimeapps.list when it manages Flipper's configuration;
+/// writing it with xdg-mime would be overwritten or break activation.
+const MANAGED: &str = "Flipper's configuration is managed by Home Manager (config.yaml is a symlink), which also owns mimeapps.list";
+
 pub fn register() -> Result<(), String> {
+    if crate::config::is_managed() {
+        return Err(format!(
+            "{MANAGED}; set programs.flipper.defaultBrowser = true instead of running --register"
+        ));
+    }
     let backup_path = backup_path()?;
     let previous = match read_backup(&backup_path)? {
         Some(previous) => previous,
@@ -80,6 +89,11 @@ pub fn register() -> Result<(), String> {
 }
 
 pub fn uninstall() -> Result<(), String> {
+    if crate::config::is_managed() {
+        return Err(format!(
+            "{MANAGED}; set programs.flipper.defaultBrowser = false instead of running --uninstall"
+        ));
+    }
     let backup_path = backup_path()?;
     let previous = read_backup(&backup_path)?.ok_or_else(|| {
         format!(

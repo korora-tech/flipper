@@ -35,3 +35,9 @@ browsers:
   order: []
 
 custom_browsers: []
+
+# Local overrides layered over this file from overrides.yaml. When config.yaml
+# is a symlink (as Home Manager writes it), Flipper saves changes there.
+# Set allowed to false to ignore them and make Flipper's interface read-only.
+overrides:
+  allowed: true

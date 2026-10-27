@@ -12,7 +12,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::browsers::BrowserProfile;
-use crate::config::{self, Config, Rule, RuleAction, Theme};
+use crate::config::{self, Config, Layers, Rule, RuleAction, Theme};
 use crate::{app_path, config_io, launch, urls::PreparedUrl};
 
 actions!(
@@ -61,11 +61,13 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 pub fn open(
-    config: Config,
+    layers: Layers,
     profiles: Vec<BrowserProfile>,
     url: Option<PreparedUrl>,
     warning: Option<String>,
 ) -> Result<(), String> {
+    let config = layers.effective.clone();
+    let read_only = layers.read_only();
     let appearance = config.appearance.clone();
     let error = Arc::new(Mutex::new(None));
     let error_from_app = Arc::clone(&error);
@@ -78,7 +80,7 @@ pub fn open(
             let Some(url) = url else {
                 let opened = cx.open_window(crate::settings::window_options(cx), |window, cx| {
                     let view = cx.new(|cx| {
-                        crate::settings::SettingsView::new(config, profiles, warning, window, cx)
+                        crate::settings::SettingsView::new(layers, profiles, warning, window, cx)
                     });
                     cx.new(|cx| Root::new(view, window, cx))
                 });
@@ -100,6 +102,7 @@ pub fn open(
                 let view = cx.new(|cx| {
                     PickerView::new(
                         config_layer,
+                        read_only,
                         profiles_layer,
                         url_layer,
                         warning_layer,
@@ -112,8 +115,9 @@ pub fn open(
             if opened.is_err() && layer {
                 let fallback = window_options(&appearance, false);
                 let fallback_opened = cx.open_window(fallback, move |window, cx| {
-                    let view =
-                        cx.new(|cx| PickerView::new(config, profiles, url, warning, window, cx));
+                    let view = cx.new(|cx| {
+                        PickerView::new(config, read_only, profiles, url, warning, window, cx)
+                    });
                     cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
                 });
                 if let Err(fallback_error) = fallback_opened {
@@ -171,28 +175,10 @@ fn is_wayland_session() -> bool {
         || std::env::var("XDG_SESSION_TYPE").is_ok_and(|session| session == "wayland")
 }
 
-fn domain_pattern_is_subset(narrow: &str, broad: &str) -> bool {
-    let normalize = |pattern: &str| {
-        let pattern = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
-        match pattern.strip_prefix("*.") {
-            Some(domain) => (domain.to_owned(), true),
-            None => (pattern, false),
-        }
-    };
-    let (narrow_domain, narrow_wildcard) = normalize(narrow);
-    let (broad_domain, broad_wildcard) = normalize(broad);
-    let same_or_subdomain =
-        narrow_domain == broad_domain || narrow_domain.ends_with(&format!(".{broad_domain}"));
-    if !same_or_subdomain {
-        return false;
-    }
-    // A wildcard broad selector excludes its apex, so a narrower selector
-    // that includes that apex is not a true subset.
-    !(broad_wildcard && !narrow_wildcard && narrow_domain == broad_domain)
-}
-
 struct PickerView {
     config: Config,
+    /// Managed with overrides disallowed: rules are copied as Nix instead.
+    read_only: bool,
     profiles: Vec<BrowserProfile>,
     prepared: Option<PreparedUrl>,
     input: Entity<InputState>,
@@ -206,8 +192,10 @@ struct PickerView {
 }
 
 impl PickerView {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: Config,
+        read_only: bool,
         profiles: Vec<BrowserProfile>,
         prepared: Option<PreparedUrl>,
         warning: Option<String>,
@@ -228,6 +216,7 @@ impl PickerView {
         })];
         Self {
             config,
+            read_only,
             profiles,
             prepared,
             input,
@@ -314,19 +303,16 @@ impl PickerView {
         self.open_at(self.selected, cx);
     }
 
-    fn save_rule(&mut self, index: usize, action: RuleAction, cx: &mut Context<Self>) {
-        let Some(prepared) = self.prepared.as_ref() else {
-            self.status = Some("Paste a link before creating a routing rule.".into());
-            cx.notify();
-            return;
-        };
+    /// The rule that Always or Always ask would save for this link.
+    fn rule_for(&self, index: usize, action: RuleAction) -> Option<Rule> {
+        let prepared = self.prepared.as_ref()?;
         let profile = self.profiles.get(index).cloned();
         let domain = prepared.effective.host_str().map(str::to_owned);
         let pattern_url = prepared.effective.to_string();
         if action == RuleAction::Open && profile.is_none() {
-            return;
+            return None;
         }
-        let rule = Rule {
+        Some(Rule {
             name: Some(match (&domain, &profile, action) {
                 (Some(domain), Some(profile), RuleAction::Open) => {
                     format!(
@@ -351,49 +337,34 @@ impl PickerView {
             } else {
                 None
             },
+        })
+    }
+
+    fn save_rule(&mut self, index: usize, action: RuleAction, cx: &mut Context<Self>) {
+        if self.prepared.is_none() {
+            self.status = Some("Paste a link before creating a routing rule.".into());
+            cx.notify();
+            return;
+        }
+        let Some(rule) = self.rule_for(index, action) else {
+            return;
         };
-        match config_io::update(|config| {
-            config.rules.retain(|existing| {
-                existing.domains != rule.domains
-                    || existing.paths != rule.paths
-                    || existing.patterns != rule.patterns
-                    || existing.extensions != rule.extensions
-            });
-            if rule.domains.is_empty() {
-                config.rules.insert(0, rule.clone());
-                return;
-            }
-            let mut exceptions = Vec::new();
-            let mut remaining = Vec::new();
-            for existing in std::mem::take(&mut config.rules) {
-                let condition_exception = existing.domains == rule.domains
-                    && (!existing.paths.is_empty()
-                        || !existing.patterns.is_empty()
-                        || !existing.extensions.is_empty());
-                let narrower_domain = !existing.domains.is_empty()
-                    && existing.domains != rule.domains
-                    && existing.domains.iter().all(|narrow| {
-                        rule.domains
-                            .iter()
-                            .any(|broad| domain_pattern_is_subset(narrow, broad))
-                    });
-                let more_specific = condition_exception || narrower_domain;
-                if more_specific {
-                    exceptions.push(existing);
+        if self.read_only {
+            self.copy_rule(rule, cx);
+            return;
+        }
+        match config_io::edit(|editor| editor.add_rule(rule)) {
+            Ok(layers) => {
+                let local = if layers.managed {
+                    " as a local override"
                 } else {
-                    remaining.push(existing);
-                }
-            }
-            exceptions.push(rule.clone());
-            exceptions.extend(remaining);
-            config.rules = exceptions;
-        }) {
-            Ok(config) => {
-                self.config = config;
+                    ""
+                };
+                self.config = layers.effective;
                 self.status = Some(if action == RuleAction::Open {
-                    "Rule saved. Opening the link now.".into()
+                    format!("Rule saved{local}. Opening the link now.")
                 } else {
-                    "Picker exception saved for this domain.".into()
+                    format!("Picker exception saved{local} for this domain.")
                 });
                 if action == RuleAction::Open {
                     self.open_profile(index, cx);
@@ -402,6 +373,15 @@ impl PickerView {
             }
             Err(error) => self.status = Some(format!("Could not save rule: {error}")),
         }
+        cx.notify();
+    }
+
+    /// Overrides are disallowed: hand the rule over as a Home Manager snippet.
+    fn copy_rule(&mut self, rule: Rule, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(crate::nix::rule(&rule, 0)));
+        self.status = Some(
+            "Rule copied as Nix. Add it to programs.flipper.settings.rules in Home Manager.".into(),
+        );
         cx.notify();
     }
 
@@ -823,16 +803,21 @@ impl Render for PickerView {
         if let Some(profile) = selected_profile {
             let index = visible[self.selected];
             let id = profile.id.clone();
+            let (always, ask) = if self.read_only {
+                ("Copy rule", "Copy ask rule")
+            } else {
+                ("Always", "Always ask")
+            };
             actions = actions
                 .child(self.button(
                     "always-rule",
-                    "Always",
+                    always,
                     cx.listener(move |this, _, _, cx| this.save_rule(index, RuleAction::Open, cx)),
                     dark,
                 ))
                 .child(self.button(
                     "picker-rule",
-                    "Always ask",
+                    ask,
                     cx.listener(move |this, _, _, cx| {
                         this.save_rule(index, RuleAction::Picker, cx)
                     }),
@@ -869,7 +854,9 @@ impl Render for PickerView {
                     .child(format!("Config warning: {warning}")),
             );
         }
-        let footer = if self.prepared.is_some() {
+        let footer = if self.prepared.is_some() && self.read_only {
+            "↑↓ select   Enter open once   Ctrl+Enter copy rule as Nix   Ctrl+1–0 open directly   Esc close"
+        } else if self.prepared.is_some() {
             "↑↓ select   Enter open once   Ctrl+Enter Always   Ctrl+1–0 open directly   Esc close"
         } else {
             "Paste a URL and press Enter, then choose a profile; configure rules and profiles in YAML"

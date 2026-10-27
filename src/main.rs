@@ -4,15 +4,14 @@ mod config;
 mod config_io;
 mod launch;
 mod native_host;
+mod nix;
 mod registration;
 mod routing;
 mod settings;
 mod ui;
 mod urls;
 
-use std::io::Read;
-
-use config::Config;
+use config::{Config, Layers};
 use urls::PreparedUrl;
 
 const USAGE: &str = "Flipper — native Linux browser and profile picker
@@ -23,13 +22,17 @@ Usage:
   flipper --register            Make Flipper the default web link handler
   flipper --uninstall           Restore prior web handlers and unregister
   flipper --suspend | --resume  Temporarily bypass or resume routing rules
-  flipper --export [PATH|-]     Export validated YAML (stdout by default)
+  flipper --export [PATH|-]     Export the effective YAML (stdout by default)
   flipper --import PATH         Validate and import YAML configuration
+  flipper --check-config PATH   Validate a configuration file and exit
+  flipper --export-overrides [--format yaml|nix]
+                                Print local overrides (yaml by default)
   flipper --native-host         Run the browser extension native host
   flipper --install-native-host chrome|firefox EXTENSION_ID
   flipper --help                Show this help
 
-Configuration: $XDG_CONFIG_HOME/flipper/config.yaml (or ~/.config/flipper/config.yaml)";
+Configuration: $XDG_CONFIG_HOME/flipper/config.yaml (or ~/.config/flipper/config.yaml).
+When config.yaml is a symlink (Home Manager), local changes go to overrides.yaml.";
 
 fn main() {
     if let Err(error) = run() {
@@ -58,13 +61,19 @@ fn run() -> Result<(), String> {
         }
         [flag] if flag == "--suspend" || flag == "--resume" => {
             let suspended = flag == "--suspend";
-            let config = config_io::update(|config| config.routing.suspended = suspended)?;
+            let layers =
+                config_io::edit(|editor| editor.set(config_io::Setting::Suspended(suspended)))?;
             println!(
-                "Routing rules {}.",
-                if config.routing.suspended {
+                "Routing rules {}{}.",
+                if layers.effective.routing.suspended {
                     "suspended"
                 } else {
                     "resumed"
+                },
+                if layers.managed {
+                    " (saved as a local override)"
+                } else {
+                    ""
                 }
             );
             return Ok(());
@@ -73,6 +82,11 @@ fn run() -> Result<(), String> {
         [flag] if flag == "--export" => return export("-"),
         [flag, path] if flag == "--export" => return export(path),
         [flag, path] if flag == "--import" => return import(path),
+        [flag, path] if flag == "--check-config" => check_config(path),
+        [flag] if flag == "--export-overrides" => export_overrides("yaml"),
+        [flag, option, format] if flag == "--export-overrides" && option == "--format" => {
+            export_overrides(format)
+        }
         [url] if url.starts_with('-') => return Err(format!("unknown option {url:?}\n\n{USAGE}")),
         [url] => return show(Some(url)),
         [] => return show(None),
@@ -80,16 +94,24 @@ fn run() -> Result<(), String> {
     }
 }
 
-fn load_config() -> (Config, Option<String>) {
-    match config::load() {
-        Ok(config) => (config, None),
-        Err(error) => (Config::default(), Some(error)),
+fn load_config() -> (Layers, Option<String>) {
+    match config::load_layers() {
+        Ok(layers) => {
+            let warning = layers.overrides_error.clone();
+            (layers, warning)
+        }
+        Err(error) => {
+            let mut layers = Layers::unmanaged(Config::default());
+            layers.managed = config::is_managed();
+            (layers, Some(error))
+        }
     }
 }
 
 fn show(input: Option<&str>) -> Result<(), String> {
-    let (config, mut warning) = load_config();
-    let profiles = browsers::discover(&config);
+    let (layers, mut warning) = load_config();
+    let config = &layers.effective;
+    let profiles = browsers::discover(config);
     let prepared = if let Some(input) = input {
         Some(PreparedUrl::parse(input, config.routing.unwrap_redirects)?)
     } else {
@@ -97,7 +119,7 @@ fn show(input: Option<&str>) -> Result<(), String> {
     };
 
     if let Some(url) = prepared.as_ref() {
-        match routing::decide(&config, &profiles, url) {
+        match routing::decide(config, &profiles, url) {
             routing::Decision::Open { profile_id, .. } => {
                 match profiles.iter().find(|profile| profile.id == profile_id) {
                     Some(profile) => match launch::launch(profile, url.effective.as_str()) {
@@ -119,16 +141,16 @@ fn show(input: Option<&str>) -> Result<(), String> {
         }
     }
 
-    ui::open(config, profiles, prepared, warning)?;
+    ui::open(layers, profiles, prepared, warning)?;
     Ok(())
 }
 
 fn export(path: &str) -> Result<(), String> {
-    let (config, warning) = load_config();
+    let (layers, warning) = load_config();
     if let Some(warning) = warning {
         return Err(format!("cannot export invalid configuration: {warning}"));
     }
-    let yaml = serde_saphyr::to_string(&config).map_err(|error| error.to_string())?;
+    let yaml = serde_saphyr::to_string(&layers.effective).map_err(|error| error.to_string())?;
     if path == "-" {
         print!("{yaml}");
         Ok(())
@@ -170,17 +192,46 @@ fn write_atomic(path: &str, contents: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Read a configuration file named on the command line.
+fn read_config_file(path: &str) -> Result<Config, String> {
+    let text = config::read_bounded(std::path::Path::new(path))?
+        .ok_or_else(|| format!("{path}: no such file"))?;
+    config::parse(&text).map_err(|error| format!("{path}: {error}"))
+}
+
 fn import(path: &str) -> Result<(), String> {
-    let file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path))?;
-    let mut text = String::new();
-    file.take(1024 * 1024 + 1)
-        .read_to_string(&mut text)
-        .map_err(|error| format!("{}: {error}", path))?;
-    if text.len() > 1024 * 1024 {
-        return Err("configuration file is larger than 1 MiB".into());
+    if config::is_managed() {
+        return Err(MANAGED_IMPORT.into());
     }
-    let config = config::parse(&text).map_err(|error| format!("{}: {error}", path))?;
+    let config = read_config_file(path)?;
     config_io::replace(&config)?;
     println!("Imported Flipper configuration from {path}.");
+    Ok(())
+}
+
+const MANAGED_IMPORT: &str = "config.yaml is managed by Home Manager (it is a symlink); set programs.flipper.settings instead of importing, or keep local changes in overrides.yaml";
+
+/// Validate shape only: profile selectors are not resolved, because the
+/// browsers they name may not exist where the configuration is built.
+fn check_config(path: &str) -> Result<(), String> {
+    read_config_file(path)?;
+    println!("{path}: configuration is valid.");
+    Ok(())
+}
+
+fn export_overrides(format: &str) -> Result<(), String> {
+    let layers = config::load_layers()?;
+    if let Some(error) = layers.overrides_error {
+        return Err(format!("cannot export invalid overrides: {error}"));
+    }
+    match format {
+        "yaml" => {
+            let yaml =
+                serde_saphyr::to_string(&layers.overrides).map_err(|error| error.to_string())?;
+            print!("{yaml}");
+        }
+        "nix" => print!("{}", nix::overrides(&layers.overrides)),
+        _ => return Err(format!("unknown format {format:?}; expected yaml or nix")),
+    }
     Ok(())
 }

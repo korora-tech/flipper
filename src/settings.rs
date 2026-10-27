@@ -1,5 +1,8 @@
 //! Settings window: a normal application window, separate from the
 //! layer-shell link selector.
+//!
+//! When the configuration is managed by Home Manager, edits are saved as
+//! local overrides; managed rules are shown but cannot be changed here.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::group_box::GroupBoxVariant;
@@ -10,14 +13,17 @@ use gpui_kit::component::setting::{
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::browsers::BrowserProfile;
-use crate::config::{self, Config, RoutingMode, Rule, RuleAction, Theme};
-use crate::{app_path, config_io, launch, registration, routing, urls::PreparedUrl};
+use crate::config::{
+    self, Config, Field, Layers, RoutingMode, Rule, RuleAction, RuleOrigin, Theme,
+};
+use crate::config_io::{self, Editor, Setting};
+use crate::{app_path, launch, registration, routing, urls::PreparedUrl};
 
 pub fn window_options(cx: &App) -> WindowOptions {
     WindowOptions {
@@ -33,7 +39,7 @@ pub fn window_options(cx: &App) -> WindowOptions {
 }
 
 pub struct SettingsView {
-    config: Config,
+    layers: Layers,
     profiles: Vec<BrowserProfile>,
     link: Entity<InputState>,
     status: Option<String>,
@@ -43,7 +49,7 @@ pub struct SettingsView {
 
 impl SettingsView {
     pub fn new(
-        config: Config,
+        layers: Layers,
         profiles: Vec<BrowserProfile>,
         warning: Option<String>,
         window: &mut Window,
@@ -63,7 +69,7 @@ impl SettingsView {
             },
         )];
         Self {
-            config,
+            layers,
             profiles,
             link,
             status: None,
@@ -72,17 +78,56 @@ impl SettingsView {
         }
     }
 
-    fn update_config(&mut self, edit: impl FnOnce(&mut Config), cx: &mut Context<Self>) {
-        match config_io::update(edit) {
-            Ok(config) => {
-                self.config = config;
-                self.profiles = crate::browsers::discover(&self.config);
-                self.warning = None;
-                self.status = Some("Configuration saved.".into());
+    /// The merged configuration that routing uses.
+    fn config(&self) -> &Config {
+        &self.layers.effective
+    }
+
+    fn apply(
+        &mut self,
+        edit: impl FnOnce(&mut Editor) -> Result<(), String>,
+        cx: &mut Context<Self>,
+    ) {
+        match config_io::edit(edit) {
+            Ok(layers) => {
+                self.status = Some(if layers.managed {
+                    "Saved as a local override.".into()
+                } else {
+                    "Configuration saved.".into()
+                });
+                self.warning = layers.overrides_error.clone();
+                self.layers = layers;
+                self.profiles = crate::browsers::discover(&self.layers.effective);
             }
             Err(error) => self.status = Some(error),
         }
+        crate::ui::apply_theme(self.config().appearance.theme, cx);
         cx.notify();
+    }
+
+    fn set(&mut self, setting: Setting, cx: &mut Context<Self>) {
+        self.apply(|editor| editor.set(setting), cx);
+    }
+
+    fn reset(&mut self, field: Field, cx: &mut Context<Self>) {
+        self.apply(|editor| editor.reset(field), cx);
+    }
+
+    fn clear_overrides(&mut self, cx: &mut Context<Self>) {
+        self.apply(|editor| editor.clear_overrides(), cx);
+    }
+
+    /// Local overrides shadow a managed value.
+    fn overridden(&self, field: Field) -> bool {
+        self.layers.managed && self.layers.overrides.has(field)
+    }
+
+    fn describe(&self, field: Field, text: &str) -> String {
+        if self.overridden(field) {
+            format!("{text} Local override; reset to use the Home Manager value.")
+        } else {
+            text.to_owned()
+        }
     }
 
     fn set_status(&mut self, status: impl Into<String>, cx: &mut Context<Self>) {
@@ -96,7 +141,7 @@ impl SettingsView {
         if text.is_empty() {
             return false;
         }
-        if let Err(error) = PreparedUrl::parse(text, self.config.routing.unwrap_redirects) {
+        if let Err(error) = PreparedUrl::parse(text, self.config().routing.unwrap_redirects) {
             self.set_status(error, cx);
             return false;
         }
@@ -118,7 +163,7 @@ impl SettingsView {
 
     fn set_fallback_mode(&mut self, mode: RoutingMode, cx: &mut Context<Self>) {
         if mode == RoutingMode::Always {
-            let Some(selector) = self.config.routing.default_profile.as_deref() else {
+            let Some(selector) = self.config().routing.default_profile.as_deref() else {
                 self.set_status(
                     "Choose a fallback profile before enabling automatic routing.",
                     cx,
@@ -143,7 +188,7 @@ impl SettingsView {
                 }
             }
         }
-        self.update_config(|config| config.routing.mode = mode, cx);
+        self.set(Setting::Mode(mode), cx);
     }
 
     fn set_fallback_profile(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -156,13 +201,11 @@ impl SettingsView {
             self.set_status("Show this profile before using it as the fallback.", cx);
             return;
         }
-        let id = id.to_owned();
-        self.update_config(|config| config.routing.default_profile = Some(id), cx);
+        self.set(Setting::DefaultProfile(id.to_owned()), cx);
     }
 
     fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
-        crate::ui::apply_theme(theme, cx);
-        self.update_config(|config| config.appearance.theme = theme, cx);
+        self.set(Setting::Theme(theme), cx);
     }
 
     fn move_profile(&mut self, id: &str, direction: isize, cx: &mut Context<Self>) {
@@ -172,40 +215,34 @@ impl SettingsView {
             .iter()
             .map(|profile| (profile.id.clone(), profile.browser_id.clone()))
             .collect::<Vec<_>>();
-        self.update_config(
-            |config| {
-                let mut order = Vec::new();
-                for entry in &config.browsers.order {
-                    let group_profiles = known_profiles
-                        .iter()
-                        .filter(|(_, browser_id)| browser_id == entry)
-                        .map(|(profile_id, _)| profile_id);
-                    let mut expanded = false;
-                    for profile_id in group_profiles {
-                        expanded = true;
-                        if !order.contains(profile_id) {
-                            order.push(profile_id.clone());
-                        }
-                    }
-                    if !expanded && !order.contains(entry) {
-                        order.push(entry.clone());
-                    }
+        let mut order = Vec::new();
+        for entry in &self.config().browsers.order {
+            let group_profiles = known_profiles
+                .iter()
+                .filter(|(_, browser_id)| browser_id == entry)
+                .map(|(profile_id, _)| profile_id);
+            let mut expanded = false;
+            for profile_id in group_profiles {
+                expanded = true;
+                if !order.contains(profile_id) {
+                    order.push(profile_id.clone());
                 }
-                for (profile_id, _) in &known_profiles {
-                    if !order.contains(profile_id) {
-                        order.push(profile_id.clone());
-                    }
-                }
-                config.browsers.order = order;
-                if let Some(index) = config.browsers.order.iter().position(|item| item == &id) {
-                    let target = (index as isize + direction)
-                        .clamp(0, config.browsers.order.len().saturating_sub(1) as isize)
-                        as usize;
-                    config.browsers.order.swap(index, target);
-                }
-            },
-            cx,
-        );
+            }
+            if !expanded && !order.contains(entry) {
+                order.push(entry.clone());
+            }
+        }
+        for (profile_id, _) in &known_profiles {
+            if !order.contains(profile_id) {
+                order.push(profile_id.clone());
+            }
+        }
+        if let Some(index) = order.iter().position(|item| item == &id) {
+            let target = (index as isize + direction)
+                .clamp(0, order.len().saturating_sub(1) as isize) as usize;
+            order.swap(index, target);
+        }
+        self.apply(|editor| editor.set_order(order), cx);
     }
 
     fn set_hidden(&mut self, id: &str, hidden: bool, cx: &mut Context<Self>) {
@@ -215,45 +252,42 @@ impl SettingsView {
             .iter()
             .find(|profile| profile.id == id)
             .map(|profile| profile.browser_id.clone());
-        self.update_config(
-            |config| {
-                if hidden {
-                    if !config.browsers.hidden.contains(&id) {
-                        config.browsers.hidden.push(id.clone());
-                    }
-                } else {
-                    config
-                        .browsers
-                        .hidden
-                        .retain(|entry| entry != &id && Some(entry) != browser_id.as_ref());
-                }
-            },
+        self.apply(
+            |editor| editor.set_hidden(&id, browser_id.as_deref(), hidden),
             cx,
         );
     }
 
-    fn remove_rule(&mut self, rule: Rule, cx: &mut Context<Self>) {
-        self.update_config(
-            |config| {
-                if let Some(index) = config.rules.iter().position(|candidate| candidate == &rule) {
-                    config.rules.remove(index);
-                }
-            },
-            cx,
-        );
+    fn remove_rule(&mut self, origin: RuleOrigin, rule: Rule, cx: &mut Context<Self>) {
+        self.apply(|editor| editor.remove_rule(origin, &rule), cx);
     }
 
+    /// Open the file the user owns: `overrides.yaml` when managed, unless
+    /// overrides are disabled, in which case the managed file is shown.
     fn open_config(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = config::path() else {
+        let Some(paths) = config::Paths::from_env() else {
             self.set_status("Could not locate the Flipper configuration path.", cx);
             return;
         };
-        if !path.exists()
-            && let Err(error) = config_io::replace(&self.config)
-        {
-            self.set_status(error, cx);
-            return;
-        }
+        let path = if self.layers.managed {
+            if self.layers.overrides_allowed() {
+                if let Err(error) = config_io::ensure_overrides(&paths) {
+                    self.set_status(error, cx);
+                    return;
+                }
+                paths.overrides
+            } else {
+                paths.config
+            }
+        } else {
+            if !paths.config.exists()
+                && let Err(error) = config_io::replace(&self.layers.base)
+            {
+                self.set_status(error, cx);
+                return;
+            }
+            paths.config
+        };
         let argv = ["xdg-open".to_owned(), path.to_string_lossy().into_owned()];
         if let Err(error) = launch::launch_argv(&argv) {
             self.set_status(format!("Could not open {}: {error}", path.display()), cx);
@@ -276,10 +310,34 @@ impl SettingsView {
         self.set_status(status, cx);
     }
 
+    /// Show a page reset button for overridden fields of a managed config.
+    fn resettable(&self) -> bool {
+        self.layers.managed && self.layers.overrides_allowed()
+    }
+
+    /// Attach "reset to managed" behaviour to a field when it is overridden.
+    fn with_reset<T>(
+        &self,
+        field: SettingField<T>,
+        key: Field,
+        cx: &mut Context<Self>,
+    ) -> SettingField<T> {
+        if !self.overridden(key) || !self.layers.overrides_allowed() {
+            return field;
+        }
+        let this = cx.entity();
+        field.on_reset(
+            |_| true,
+            move |_, cx| this.update(cx, |this, cx| this.reset(key, cx)),
+        )
+    }
+
     fn general_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.entity();
         let link = self.link.clone();
-        let routing = &self.config.routing;
+        let routing = &self.config().routing;
+        let read_only = self.layers.read_only();
+        let managed = self.layers.managed;
 
         let profile_options = self
             .profiles
@@ -303,9 +361,62 @@ impl SettingsView {
         let suspended = routing.suspended;
         let unwrap = routing.unwrap_redirects;
 
+        let mode_field = self.with_reset(
+            SettingField::dropdown(
+                vec![
+                    ("picker".into(), "Show the picker".into()),
+                    ("always".into(), "Open the fallback profile".into()),
+                ],
+                move |_| mode.clone(),
+                {
+                    let this = this.clone();
+                    move |value, cx| {
+                        let mode = if value == "always" {
+                            RoutingMode::Always
+                        } else {
+                            RoutingMode::Picker
+                        };
+                        this.update(cx, |this, cx| this.set_fallback_mode(mode, cx));
+                    }
+                },
+            ),
+            Field::Mode,
+            cx,
+        );
+        let fallback_field = self.with_reset(
+            SettingField::scrollable_dropdown(profile_options, move |_| fallback_id.clone(), {
+                let this = this.clone();
+                move |value, cx| {
+                    this.update(cx, |this, cx| this.set_fallback_profile(&value, cx));
+                }
+            }),
+            Field::DefaultProfile,
+            cx,
+        );
+        let suspended_field = self.with_reset(
+            SettingField::switch(move |_| suspended, {
+                let this = this.clone();
+                move |value, cx| {
+                    this.update(cx, |this, cx| this.set(Setting::Suspended(value), cx));
+                }
+            }),
+            Field::Suspended,
+            cx,
+        );
+        let unwrap_field = self.with_reset(
+            SettingField::switch(move |_| unwrap, {
+                let this = this.clone();
+                move |value, cx| {
+                    this.update(cx, |this, cx| this.set(Setting::UnwrapRedirects(value), cx));
+                }
+            }),
+            Field::UnwrapRedirects,
+            cx,
+        );
+
         SettingPage::new("General")
             .icon(IconName::Settings)
-            .resettable(false)
+            .resettable(self.resettable())
             .group(
                 SettingGroup::new().title("Open a link").item(
                     SettingItem::new(
@@ -321,84 +432,33 @@ impl SettingsView {
                 SettingGroup::new()
                     .title("Routing")
                     .item(
-                        SettingItem::new(
-                            "When no rule matches",
-                            SettingField::dropdown(
-                                vec![
-                                    ("picker".into(), "Show the picker".into()),
-                                    ("always".into(), "Open the fallback profile".into()),
-                                ],
-                                move |_| mode.clone(),
-                                {
-                                    let this = this.clone();
-                                    move |value, cx| {
-                                        let mode = if value == "always" {
-                                            RoutingMode::Always
-                                        } else {
-                                            RoutingMode::Picker
-                                        };
-                                        this.update(cx, |this, cx| {
-                                            this.set_fallback_mode(mode, cx)
-                                        });
-                                    }
-                                },
-                            ),
-                        )
-                        .description("Rules always run first."),
+                        SettingItem::new("When no rule matches", mode_field)
+                            .description(self.describe(Field::Mode, "Rules always run first."))
+                            .disabled(read_only),
                     )
                     .item(
-                        SettingItem::new(
-                            "Fallback profile",
-                            SettingField::scrollable_dropdown(
-                                profile_options,
-                                move |_| fallback_id.clone(),
-                                {
-                                    let this = this.clone();
-                                    move |value, cx| {
-                                        this.update(cx, |this, cx| {
-                                            this.set_fallback_profile(&value, cx)
-                                        });
-                                    }
-                                },
-                            ),
-                        )
-                        .description("Used when no rule matches and the picker is off."),
+                        SettingItem::new("Fallback profile", fallback_field)
+                            .description(self.describe(
+                                Field::DefaultProfile,
+                                "Used when no rule matches and the picker is off.",
+                            ))
+                            .disabled(read_only),
                     )
                     .item(
-                        SettingItem::new(
-                            "Pause rules",
-                            SettingField::switch(move |_| suspended, {
-                                let this = this.clone();
-                                move |value, cx| {
-                                    this.update(cx, |this, cx| {
-                                        this.update_config(
-                                            |config| config.routing.suspended = value,
-                                            cx,
-                                        )
-                                    });
-                                }
-                            }),
-                        )
-                        .description("Show the picker for every link without deleting rules."),
+                        SettingItem::new("Pause rules", suspended_field)
+                            .description(self.describe(
+                                Field::Suspended,
+                                "Show the picker for every link without deleting rules.",
+                            ))
+                            .disabled(read_only),
                     )
                     .item(
-                        SettingItem::new(
-                            "Unwrap redirects",
-                            SettingField::switch(move |_| unwrap, {
-                                let this = this.clone();
-                                move |value, cx| {
-                                    this.update(cx, |this, cx| {
-                                        this.update_config(
-                                            |config| config.routing.unwrap_redirects = value,
-                                            cx,
-                                        )
-                                    });
-                                }
-                            }),
-                        )
-                        .description(
-                            "Resolve Microsoft SafeLinks and Google redirects before routing.",
-                        ),
+                        SettingItem::new("Unwrap redirects", unwrap_field)
+                            .description(self.describe(
+                                Field::UnwrapRedirects,
+                                "Resolve Microsoft SafeLinks and Google redirects before routing.",
+                            ))
+                            .disabled(read_only),
                     ),
             )
             .group(
@@ -415,6 +475,7 @@ impl SettingsView {
                                             .primary()
                                             .small()
                                             .label("Make Flipper default")
+                                            .disabled(managed)
                                             .on_click({
                                                 let this = this.clone();
                                                 move |_, _, cx| {
@@ -426,6 +487,7 @@ impl SettingsView {
                                         Button::new("unregister-default")
                                             .small()
                                             .label("Restore previous")
+                                            .disabled(managed)
                                             .on_click({
                                                 let this = this.clone();
                                                 move |_, _, cx| {
@@ -436,62 +498,76 @@ impl SettingsView {
                             }
                         }),
                     )
-                    .description("Send http and https links from other apps through Flipper."),
+                    .description(if managed {
+                        "Managed by Home Manager: set programs.flipper.defaultBrowser."
+                    } else {
+                        "Send http and https links from other apps through Flipper."
+                    }),
                 ),
             )
     }
 
     fn appearance_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.entity();
-        let theme: SharedString = match self.config.appearance.theme {
+        let theme: SharedString = match self.config().appearance.theme {
             Theme::System => "system".into(),
             Theme::Light => "light".into(),
             Theme::Dark => "dark".into(),
         };
-        let dim = self.config.appearance.dim;
+        let dim = self.config().appearance.dim;
+        let read_only = self.layers.read_only();
+        let theme_field = self.with_reset(
+            SettingField::dropdown(
+                vec![
+                    ("system".into(), "System".into()),
+                    ("light".into(), "Light".into()),
+                    ("dark".into(), "Dark".into()),
+                ],
+                move |_| theme.clone(),
+                {
+                    let this = this.clone();
+                    move |value, cx| {
+                        let theme = match value.as_ref() {
+                            "light" => Theme::Light,
+                            "dark" => Theme::Dark,
+                            _ => Theme::System,
+                        };
+                        this.update(cx, |this, cx| this.set_theme(theme, cx));
+                    }
+                },
+            ),
+            Field::Theme,
+            cx,
+        );
+        let dim_field = self.with_reset(
+            SettingField::switch(move |_| dim, {
+                let this = this.clone();
+                move |value, cx| {
+                    this.update(cx, |this, cx| this.set(Setting::Dim(value), cx));
+                }
+            }),
+            Field::Dim,
+            cx,
+        );
         SettingPage::new("Appearance")
             .icon(IconName::Palette)
-            .resettable(false)
+            .resettable(self.resettable())
             .group(
                 SettingGroup::new()
-                    .item(SettingItem::new(
-                        "Theme",
-                        SettingField::dropdown(
-                            vec![
-                                ("system".into(), "System".into()),
-                                ("light".into(), "Light".into()),
-                                ("dark".into(), "Dark".into()),
-                            ],
-                            move |_| theme.clone(),
-                            {
-                                let this = this.clone();
-                                move |value, cx| {
-                                    let theme = match value.as_ref() {
-                                        "light" => Theme::Light,
-                                        "dark" => Theme::Dark,
-                                        _ => Theme::System,
-                                    };
-                                    this.update(cx, |this, cx| this.set_theme(theme, cx));
-                                }
-                            },
-                        ),
-                    ))
                     .item(
-                        SettingItem::new(
-                            "Dim the screen",
-                            SettingField::switch(move |_| dim, {
-                                let this = this.clone();
-                                move |value, cx| {
-                                    this.update(cx, |this, cx| {
-                                        this.update_config(
-                                            |config| config.appearance.dim = value,
-                                            cx,
-                                        )
-                                    });
-                                }
-                            }),
-                        )
-                        .description("Darken everything behind the link selector."),
+                        SettingItem::new("Theme", theme_field)
+                            .description(
+                                self.describe(Field::Theme, "Light, dark or the system theme."),
+                            )
+                            .disabled(read_only),
+                    )
+                    .item(
+                        SettingItem::new("Dim the screen", dim_field)
+                            .description(self.describe(
+                                Field::Dim,
+                                "Darken everything behind the link selector.",
+                            ))
+                            .disabled(read_only),
                     ),
             )
     }
@@ -499,17 +575,27 @@ impl SettingsView {
     fn browsers_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.entity();
         let fallback = self
-            .config
+            .config()
             .routing
             .default_profile
             .as_deref()
             .and_then(|selector| routing::resolve_selector(selector, &self.profiles).ok())
             .map(|profile| profile.id.clone());
+        let read_only = self.layers.read_only();
         let last = self.profiles.len().saturating_sub(1);
         let mut group = SettingGroup::new()
             .title("Profiles")
             .description("Order and visibility in the link selector.")
-            .footer(|_, _| "Add custom browsers under custom_browsers in the YAML configuration.");
+            .footer({
+                let managed = self.layers.managed;
+                move |_, _| {
+                    if managed {
+                        "Add custom browsers with programs.flipper.settings.customBrowsers in Home Manager."
+                    } else {
+                        "Add custom browsers under custom_browsers in the YAML configuration."
+                    }
+                }
+            });
         if self.profiles.is_empty() {
             group = group.item(SettingItem::render(|_, _, cx| {
                 div()
@@ -522,6 +608,16 @@ impl SettingsView {
             let id = profile.id.clone();
             let visible = !profile.hidden;
             let is_fallback = fallback.as_deref() == Some(id.as_str());
+            // Hidden by the managed base: overrides can only add hidden IDs.
+            let locked = read_only
+                || (self.layers.managed
+                    && self
+                        .layers
+                        .base
+                        .browsers
+                        .hidden
+                        .iter()
+                        .any(|entry| entry == &profile.id || entry == &profile.browser_id));
             let this = this.clone();
             group = group.item(
                 SettingItem::new(
@@ -538,7 +634,7 @@ impl SettingsView {
                                     .ghost()
                                     .small()
                                     .icon(IconName::ArrowUp)
-                                    .disabled(index == 0)
+                                    .disabled(index == 0 || read_only)
                                     .on_click({
                                         let (this, id) = (this.clone(), id.clone());
                                         move |_, _, cx| {
@@ -553,7 +649,7 @@ impl SettingsView {
                                     .ghost()
                                     .small()
                                     .icon(IconName::ArrowDown)
-                                    .disabled(index == last)
+                                    .disabled(index == last || read_only)
                                     .on_click({
                                         let (this, id) = (this.clone(), id.clone());
                                         move |_, _, cx| {
@@ -566,6 +662,7 @@ impl SettingsView {
                             .child(
                                 Switch::new(SharedString::from(format!("visible-{id}")))
                                     .checked(visible)
+                                    .disabled(locked)
                                     .accessibility_label("Show in the link selector")
                                     .on_change({
                                         let (this, id) = (this.clone(), id.clone());
@@ -591,13 +688,22 @@ impl SettingsView {
 
     fn rules_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.entity();
+        let managed = self.layers.managed;
         let mut group = SettingGroup::new()
             .title("Rules")
-            .description("The first matching rule wins.")
-            .footer(|_, _| {
-                "Choose Always in the link selector to add a rule, or edit paths, patterns and extensions in YAML."
+            .description(if managed {
+                "The first matching rule wins. Local rules run before Home Manager rules."
+            } else {
+                "The first matching rule wins."
+            })
+            .footer(move |_, _| {
+                if managed {
+                    "Choose Always in the link selector to add a local rule; promote local rules into Nix with flipper --export-overrides --format nix."
+                } else {
+                    "Choose Always in the link selector to add a rule, or edit paths, patterns and extensions in YAML."
+                }
             });
-        if self.config.rules.is_empty() {
+        if self.config().rules.is_empty() {
             group = group.item(SettingItem::render(|_, _, cx| {
                 div()
                     .text_sm()
@@ -605,8 +711,16 @@ impl SettingsView {
                     .child("No rules yet.")
             }));
         }
-        for (index, rule) in self.config.rules.iter().enumerate() {
+        for (index, rule) in self.config().rules.iter().enumerate() {
             let rule_for_remove = rule.clone();
+            let origin = self.layers.rule_origin(index);
+            let editable = self.layers.rule_editable(index);
+            // Only distinguish origins when there are two layers to tell apart.
+            let tag = match origin {
+                RuleOrigin::Local if managed || !self.layers.overrides.is_empty() => Some("Local"),
+                RuleOrigin::Base if managed => Some("Home Manager"),
+                _ => None,
+            };
             let this = this.clone();
             let conditions = rule
                 .domains
@@ -629,16 +743,42 @@ impl SettingsView {
                 SettingItem::new(
                     rule.name.clone().unwrap_or_else(|| conditions.clone()),
                     SettingField::render(move |_, _, _| {
-                        Button::new(("remove-rule", index))
-                            .ghost()
-                            .small()
-                            .icon(IconName::Delete)
-                            .label("Remove")
-                            .on_click({
-                                let (this, rule) = (this.clone(), rule_for_remove.clone());
-                                move |_, _, cx| {
-                                    this.update(cx, |this, cx| this.remove_rule(rule.clone(), cx))
-                                }
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .when_some(tag, |row, tag| {
+                                row.child(if origin == RuleOrigin::Base {
+                                    Tag::secondary().small().child(
+                                        h_flex()
+                                            .gap_1()
+                                            .items_center()
+                                            .child(
+                                                Icon::new(gpui_kit::assets::IconName::Lock)
+                                                    .xsmall(),
+                                            )
+                                            .child(tag),
+                                    )
+                                } else {
+                                    Tag::info().small().child(tag)
+                                })
+                            })
+                            .when(editable, |row| {
+                                row.child(
+                                    Button::new(("remove-rule", index))
+                                        .ghost()
+                                        .small()
+                                        .icon(IconName::Delete)
+                                        .label("Remove")
+                                        .on_click({
+                                            let (this, rule) =
+                                                (this.clone(), rule_for_remove.clone());
+                                            move |_, _, cx| {
+                                                this.update(cx, |this, cx| {
+                                                    this.remove_rule(origin, rule.clone(), cx)
+                                                })
+                                            }
+                                        }),
+                                )
                             })
                     }),
                 )
@@ -653,41 +793,101 @@ impl SettingsView {
 
     fn configuration_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.entity();
-        let path = config::path().map_or_else(
+        let paths = config::Paths::from_env();
+        let config_path = paths.as_ref().map_or_else(
             || "~/.config/flipper/config.yaml".into(),
-            |path| path.display().to_string(),
+            |paths| paths.config.display().to_string(),
+        );
+        let overrides_path = paths.as_ref().map_or_else(
+            || "~/.config/flipper/overrides.yaml".into(),
+            |paths| paths.overrides.display().to_string(),
+        );
+        let managed = self.layers.managed;
+        let allowed = self.layers.overrides_allowed();
+        let has_overrides = !self.layers.overrides.is_empty();
+        let (open_title, open_label, open_path) = match (managed, allowed) {
+            (true, true) => ("Local overrides", "Open overrides", overrides_path.clone()),
+            (true, false) => ("Managed YAML", "View managed file", config_path.clone()),
+            _ => ("YAML file", "Open in editor", config_path.clone()),
+        };
+        let mut group = SettingGroup::new().item(
+            SettingItem::new(
+                open_title,
+                SettingField::render({
+                    let this = this.clone();
+                    move |_, _, _| {
+                        Button::new("open-config")
+                            .small()
+                            .icon(IconName::ExternalLink)
+                            .label(open_label)
+                            .on_click({
+                                let this = this.clone();
+                                move |_, _, cx| this.update(cx, |this, cx| this.open_config(cx))
+                            })
+                    }
+                }),
+            )
+            .description(open_path),
+        );
+        if managed {
+            group = group.item(
+                SettingItem::new(
+                    "Managed configuration",
+                    SettingField::render(|_, _, _| div()),
+                )
+                .description(format!("{config_path} (Home Manager; read-only)")),
+            );
+        }
+        if allowed && (managed || has_overrides) {
+            group = group.item(
+                SettingItem::new(
+                    "Clear local overrides",
+                    SettingField::render(move |_, _, _| {
+                        Button::new("clear-overrides")
+                            .small()
+                            .icon(IconName::Delete)
+                            .label("Clear")
+                            .disabled(!has_overrides)
+                            .on_click({
+                                let this = this.clone();
+                                move |_, _, cx| {
+                                    this.update(cx, |this, cx| this.clear_overrides(cx))
+                                }
+                            })
+                    }),
+                )
+                .description(
+                    "Remove every local rule and setting from overrides.yaml. Export them first with flipper --export-overrides --format nix.",
+                ),
+            );
+        }
+        group = group.item(
+            SettingItem::new("Import and export", SettingField::render(|_, _, _| div()))
+                .description(if managed {
+                    "flipper --export [PATH|-]  ·  flipper --export-overrides [--format yaml|nix]"
+                } else {
+                    "flipper --import PATH  ·  flipper --export [PATH|-]"
+                }),
         );
         SettingPage::new("Configuration")
             .icon(IconName::FileText)
             .resettable(false)
-            .group(
-                SettingGroup::new()
-                    .item(
-                        SettingItem::new(
-                            "YAML file",
-                            SettingField::render(move |_, _, _| {
-                                Button::new("open-config")
-                                    .small()
-                                    .icon(IconName::ExternalLink)
-                                    .label("Open in editor")
-                                    .on_click({
-                                        let this = this.clone();
-                                        move |_, _, cx| {
-                                            this.update(cx, |this, cx| this.open_config(cx))
-                                        }
-                                    })
-                            }),
-                        )
-                        .description(path),
-                    )
-                    .item(
-                        SettingItem::new(
-                            "Import and export",
-                            SettingField::render(|_, _, _| div()),
-                        )
-                        .description("flipper --import PATH  ·  flipper --export [PATH|-]"),
-                    ),
-            )
+            .group(group)
+    }
+}
+
+impl SettingsView {
+    fn banner(&self) -> Option<&'static str> {
+        match (self.layers.managed, self.layers.overrides_allowed()) {
+            (true, true) => Some("Managed by Home Manager — changes are saved as local overrides."),
+            (true, false) => Some(
+                "Managed by Home Manager — read-only. Local overrides are disabled in your Home Manager configuration.",
+            ),
+            (false, _) if !self.layers.overrides.is_empty() => {
+                Some("Local overrides from overrides.yaml apply on top of config.yaml.")
+            }
+            _ => None,
+        }
     }
 }
 
@@ -715,6 +915,16 @@ impl Render for SettingsView {
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
+            .when_some(self.banner(), |this, banner| {
+                this.child(
+                    div()
+                        .px_4()
+                        .py_2()
+                        .text_sm()
+                        .bg(theme.info.opacity(0.15))
+                        .child(banner),
+                )
+            })
             .when_some(self.warning.clone(), |this, warning| {
                 this.child(
                     div()
