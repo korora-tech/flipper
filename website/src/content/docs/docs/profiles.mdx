@@ -1,0 +1,91 @@
+---
+title: Browsers and profiles
+description: Which browsers Flipper detects, how profiles are identified, and how to add your own.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Flipper discovers installed browsers and their profiles each time it starts. Nothing needs to be configured
+for a browser to appear.
+
+## Detected browsers
+
+| Family | Browsers (ID) |
+| --- | --- |
+| Chromium | Google Chrome (`chrome`), Chrome Beta (`chrome-beta`), Chrome Dev (`chrome-dev`), Chromium (`chromium`), Brave (`brave`), Microsoft Edge (`edge`), Vivaldi (`vivaldi`), Opera (`opera`) |
+| Firefox | Firefox (`firefox`), Firefox Beta (`firefox-beta`), Firefox Developer Edition (`firefox-devedition`), Firefox Nightly (`firefox-nightly`), Firefox ESR (`firefox-esr`), LibreWolf (`librewolf`), Floorp (`floorp`), Zen (`zen`), Waterfox (`waterfox`), Mullvad Browser (`mullvad`) |
+
+Native, Flatpak and Snap installs are detected. Only installed browsers are listed.
+
+Firefox profiles are read from `~/.mozilla/firefox` or `$XDG_CONFIG_HOME/mozilla/firefox`. Firefox editions
+share Mozilla's profile root, so a profile appears once per installed edition.
+
+## Profile IDs
+
+Every profile has a stable ID. Use it in rules, `routing.default_profile`, `browsers.hidden` and
+`browsers.order`. The settings window lists the ID of each profile under Browsers.
+
+| Source | ID | Example |
+| --- | --- | --- |
+| Chromium browsers | `<browser>:<profile directory>` | `chrome:Default`, `chrome:Profile 1`, `brave:Profile 2` |
+| Chromium with `CHROME_USER_DATA_DIR` or `CHROME_CONFIG_HOME` | `<browser>@<root hash>:<profile directory>` | `chrome@0123456789abcdef:Default` |
+| Firefox-family browsers | `<browser>:<profiles.ini Path>` | `firefox:abcd1234.default-release`, `zen:xyz.Default (release)` |
+| Firefox containers | `<profile ID>#container-<userContextId>` | `firefox:abcd1234.default-release#container-2` |
+| Custom browsers | `custom:<id>` | `custom:work` |
+
+Flatpak and Snap installs add `-flatpak` or `-snap` to the browser ID, as in
+`firefox-flatpak:abcd1234.default`.
+
+Chromium IDs use the profile directory, not its display name, so renaming a Chrome profile does not break
+your rules.
+
+## Email selectors
+
+Anywhere a profile ID is accepted, `email:you@example.com` selects the profile signed in to that account. Flipper
+reads the account from Chromium's local `Local State` file (`profile.info_cache.*.user_name`) and from a custom
+browser's `email`. Firefox profiles have no email.
+
+Matching ignores case. The address must belong to exactly one profile; if it matches none, or more than one,
+the link falls back to the picker.
+
+## Firefox containers
+
+Containers appear as separate profiles, labelled `<profile> · <container>`, but only for Firefox profiles where
+the [Flipper add-on](/docs/browser-extensions/) is installed. Firefox cannot open a container from the command
+line, so the add-on does it.
+
+Container IDs are the `userContextId` values in the profile's `containers.json`. Firefox's built-in containers are
+normally `1` (Personal), `2` (Work), `3` (Banking) and `4` (Shopping); containers you create get higher numbers.
+
+## Hide and reorder
+
+```yaml
+browsers:
+  hidden: [opera, "chrome:Profile 3"]
+  order: [firefox, "chrome:Profile 1"]
+```
+
+Both lists accept profile IDs and browser IDs. A browser ID applies to every profile of that browser. Rules that
+open a hidden profile fall back to the picker.
+
+## Custom browsers
+
+Add any launch command as a profile:
+
+```yaml
+custom_browsers:
+  - id: work
+    name: Firefox
+    profile_name: Work
+    email: you@example.com # optional, used by email: selectors
+    icon_name: firefox # freedesktop icon name; defaults to web-browser
+    command: [firefox, -P, Work, "{url}"]
+```
+
+The profile ID is `custom:work`. `command` runs without a shell. `{url}` must be a whole argument, and it is
+appended when absent.
+
+<Aside type="note">
+	Flipper reads only profile metadata: Chromium's `Local State`, Firefox's `profiles.ini` and a profile's
+	`containers.json`. It never opens cookies, token stores, history or other browsing databases.
+</Aside>

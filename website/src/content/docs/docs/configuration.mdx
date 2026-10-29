@@ -1,0 +1,85 @@
+---
+title: Configuration file
+description: Where Flipper's YAML configuration lives and what every key does.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Flipper reads `$XDG_CONFIG_HOME/flipper/config.yaml`, falling back to `~/.config/flipper/config.yaml`.
+Every key is optional; Flipper ships with the defaults shown below. Unknown keys are rejected.
+
+```yaml
+version: 1
+
+appearance:
+  theme: system # system, light or dark
+  dim: true # dim the screen behind the picker
+  width: 760 # picker width in logical pixels
+
+routing:
+  mode: picker # picker, or always to open default_profile when no rule matches
+  default_profile: null
+  suspended: false # true shows the picker for every link without deleting rules
+  unwrap_redirects: true # resolve SafeLinks and Google redirects first
+
+rules: []
+
+browsers:
+  hidden: []
+  order: []
+
+custom_browsers: []
+
+overrides:
+  allowed: true
+```
+
+## `appearance`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `theme` | `system` | `system`, `light` or `dark` |
+| `dim` | `true` | Dim the desktop behind the picker |
+| `width` | `760` | Picker width in logical pixels |
+
+## `routing`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `mode` | `picker` | What happens when no rule matches: show the `picker`, or `always` open `default_profile` |
+| `default_profile` | `null` | Profile ID or `email:` selector used by `always` mode |
+| `suspended` | `false` | Skip all rules and show the picker for every link |
+| `unwrap_redirects` | `true` | Resolve Microsoft SafeLinks and Google `/url` redirects, including nested ones, before routing |
+
+If `default_profile` is unavailable or hidden, the link falls back to the picker.
+
+`flipper --suspend` and `flipper --resume` toggle `suspended` from the command line.
+
+## `rules`
+
+An ordered list. See [Routing rules](/docs/rules/).
+
+## `browsers` and `custom_browsers`
+
+Hide, reorder and add browsers. See [Browsers and profiles](/docs/profiles/).
+
+## `overrides`
+
+`allowed: false` makes Flipper ignore `overrides.yaml` and turns the settings window read-only. It only
+matters for a managed configuration; see [Local overrides](/docs/overrides/).
+
+## Validate, import and export
+
+```sh
+flipper --check-config config.yaml   # check the shape of a file and exit
+flipper --import config.yaml         # validate, then replace the configuration atomically
+flipper --export                     # print the effective configuration
+flipper --export backup.yaml         # or write it to a file
+```
+
+<Aside type="note">
+	`--check-config` checks shape only. It does not resolve profile selectors, because the browsers they name may not
+	exist where the file is built.
+</Aside>
+
+`--export` writes the effective configuration, including local overrides.

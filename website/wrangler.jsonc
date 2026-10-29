@@ -1,0 +1,13 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "flipper-website",
+	"compatibility_date": "2026-10-01",
+	// Static assets only: Astro builds plain HTML, so no Worker script runs.
+	"assets": {
+		"directory": "./dist",
+		"not_found_handling": "404-page"
+	},
+	"routes": [{ "pattern": "flipper.korora.tech", "custom_domain": true }],
+	"workers_dev": false,
+	"preview_urls": false
+}

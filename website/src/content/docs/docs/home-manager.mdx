@@ -1,0 +1,117 @@
+---
+title: Home Manager
+description: Configure Flipper declaratively with its Home Manager module.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The flake exports `homeModules.default` (also `homeModules.flipper`). It writes `config.yaml`, can set Flipper as
+the default browser, and installs native messaging hosts for the browser extensions. The generated `config.yaml`
+is checked with `flipper --check-config` when it is built, so an invalid configuration fails
+`home-manager switch`.
+
+```nix
+{
+  inputs.flipper.url = "github:korora-tech/flipper";
+
+  # In your Home Manager configuration:
+  imports = [ inputs.flipper.homeModules.default ];
+
+  programs.flipper = {
+    enable = true;
+    # Set xdg.mimeApps defaults for http, https and text/html.
+    defaultBrowser = true;
+    # Let the settings window and picker save overrides.yaml (default).
+    allowOverrides = true;
+    nativeMessaging = {
+      firefox = true;
+      chromium = [ "abcdefghijklmnopabcdefghijklmnop" ];
+    };
+    settings = {
+      appearance = {
+        theme = "dark"; # system, light or dark
+        dim = true;
+        width = 760;
+      };
+      routing = {
+        mode = "picker"; # or "always" with defaultProfile
+        defaultProfile = null;
+        suspended = false;
+        unwrapRedirects = true;
+      };
+      rules = [
+        {
+          name = "Choose for admin";
+          domains = [ "example.com" ];
+          paths = [ "/admin" ];
+          action = "picker";
+        }
+        {
+          name = "Company links";
+          domains = [ "example.com" "*.example.org" ];
+          action = "open";
+          profile = "email:you@example.com";
+        }
+        {
+          name = "GitHub in the Work container";
+          domains = [ "github.com" ];
+          action = "open";
+          profile = "firefox:abcd1234.default-release#container-2";
+        }
+        {
+          name = "Documents";
+          extensions = [ "pdf" "docx" ];
+        }
+      ];
+      browsers = {
+        hidden = [ "opera" ];
+        order = [ "firefox" "chrome:Profile 1" ];
+      };
+      customBrowsers = [
+        {
+          id = "work";
+          name = "Firefox";
+          profileName = "Work";
+          command = [ "firefox" "-P" "Work" "{url}" ];
+        }
+      ];
+    };
+  };
+
+  # Install the add-on for context menus and containers.
+  programs.firefox.profiles.default.extensions.packages = [
+    inputs.flipper.packages.${pkgs.stdenv.hostPlatform.system}.firefox-addon
+  ];
+}
+```
+
+Option names are the YAML keys in camelCase: `default_profile` becomes `defaultProfile`, `custom_browsers`
+becomes `customBrowsers`. Rules keep their order.
+
+## Options
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `enable` | `false` | Install Flipper and write its configuration |
+| `package` | the flake's build | The Flipper package |
+| `defaultBrowser` | `false` | Set Flipper as the `xdg.mimeApps` default for `http`, `https` and `text/html` |
+| `allowOverrides` | `true` | Let Flipper save local changes to `overrides.yaml`; see [Local overrides](/docs/overrides/) |
+| `nativeMessaging.firefox` | `false` | Install the native messaging host for the add-on `flipper@korora.tech` |
+| `nativeMessaging.chromium` | `[ ]` | Chromium extension IDs allowed to use the native messaging host |
+| `nativeMessaging.chromiumDirectories` | every supported browser | Chromium user-data directories under `$XDG_CONFIG_HOME` that receive the host manifest |
+| `settings` | | The [configuration](/docs/configuration/), in camelCase |
+
+`nativeMessaging.chromium` installs a manifest in each Chromium browser's `NativeMessagingHosts` directory under
+`$XDG_CONFIG_HOME`: `google-chrome`, `google-chrome-beta`, `google-chrome-unstable`, `chromium`,
+`BraveSoftware/Brave-Browser`, `microsoft-edge`, `vivaldi` and `opera`. Set `chromiumDirectories` to narrow it.
+
+## The Firefox add-on package
+
+`packages.firefox-addon` is the add-on as
+`share/mozilla/extensions/{ec8030f7-c20a-464f-9b0e-13a3a9e97384}/flipper@korora.tech.xpi`, with
+`passthru.addonId = "flipper@korora.tech"`, so Home Manager's Firefox module can install it per profile.
+
+<Aside type="caution">
+	If another module also sets the web MIME defaults, use `lib.mkForce` on `xdg.mimeApps.defaultApplications` for the
+	conflicting types.
+</Aside>

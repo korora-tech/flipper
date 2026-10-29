@@ -1,0 +1,41 @@
+---
+title: Command line
+description: Every flipper command and option.
+---
+
+```
+flipper URL                   Choose a browser/profile for a link
+flipper [--settings]          Open Flipper settings
+flipper --register            Make Flipper the default web link handler
+flipper --uninstall           Restore prior web handlers and unregister
+flipper --suspend | --resume  Temporarily bypass or resume routing rules
+flipper --export [PATH|-]     Export the effective YAML (stdout by default)
+flipper --import PATH         Validate and import YAML configuration
+flipper --check-config PATH   Validate a configuration file and exit
+flipper --export-overrides [--format yaml|nix]
+                              Print local overrides (yaml by default)
+flipper --native-host         Run the browser extension native host
+flipper --install-native-host chrome|firefox EXTENSION_ID
+flipper --help                Show this help
+flipper --version             Print the version
+```
+
+| Command | Notes |
+| --- | --- |
+| `flipper URL` | Applies your rules. If one opens a profile, Flipper launches it and exits without showing a window; otherwise the picker opens. Accepts `http`, `https` and `file` URLs. |
+| `flipper`, `flipper --settings` | Opens the settings window. |
+| `--register`, `--uninstall` | See [Installation](/docs/installation/#make-flipper-the-default-browser). Refused when Home Manager manages the configuration. |
+| `--suspend`, `--resume` | Sets `routing.suspended`. Saved as a local override when the configuration is managed. |
+| `--export [PATH\|-]` | Writes the effective configuration, including local overrides. |
+| `--import PATH` | Validates the file, then replaces `config.yaml` atomically. Refused when managed. |
+| `--check-config PATH` | Checks the file's shape and exits non-zero if it is invalid. Profile selectors are not resolved. |
+| `--export-overrides` | Prints `overrides.yaml` as YAML, or as Nix with `--format nix`. |
+| `--native-host` | Run by browsers through the native messaging manifest; not for direct use. |
+| `--install-native-host` | Writes the native messaging manifest for `chrome` or `firefox`. See [Browser extensions](/docs/browser-extensions/). |
+
+## Files
+
+| Path | Contents |
+| --- | --- |
+| `$XDG_CONFIG_HOME/flipper/config.yaml` | Configuration; falls back to `~/.config/flipper/config.yaml` |
+| `$XDG_CONFIG_HOME/flipper/overrides.yaml` | [Local overrides](/docs/overrides/) |

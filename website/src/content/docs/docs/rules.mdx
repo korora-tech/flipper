@@ -1,0 +1,92 @@
+---
+title: Routing rules
+description: How Flipper matches links against rules and decides where they open.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Rules are an ordered list under `rules:`. For each link, Flipper walks the list from the top and stops at the
+first rule that matches. If none matches, `routing.mode` decides: show the picker, or open
+`routing.default_profile`.
+
+```yaml
+rules:
+  - name: Choose for admin
+    domains: [example.com]
+    paths: [/admin]
+    action: picker
+
+  - name: Company links
+    domains: [example.com, "*.example.org"]
+    action: open
+    profile: "email:you@example.com"
+
+  - name: Documents
+    extensions: [pdf, docx]
+```
+
+## Fields
+
+| Field | Matches |
+| --- | --- |
+| `name` | Nothing; a label shown in settings and messages |
+| `domains` | The link's host |
+| `paths` | The URL path |
+| `patterns` | The whole URL, with `*` wildcards |
+| `extensions` | The file extension at the end of the path |
+| `action` | `picker` (the default) or `open` |
+| `profile` | The profile for `open`: a [profile ID](/docs/profiles/#profile-ids) or `email:` selector |
+
+Values inside one field are alternatives: any of them can match. Fields you fill in are combined: all of them
+must match. A rule with no `domains`, `paths`, `patterns` or `extensions` never matches.
+
+## Domains
+
+- `example.com` matches `example.com` and every subdomain, such as `docs.example.com`.
+- `*.example.com` matches subdomains only, not `example.com` itself.
+
+Matching ignores case and a trailing dot.
+
+## Paths
+
+- Without a `*`, a path matches itself and anything below it at a `/` boundary: `/admin` matches `/admin` and
+  `/admin/users`, but not `/administrator`.
+- With a `*`, the whole path must match the wildcard: `/work/*`.
+
+## Patterns
+
+A pattern matches the complete URL, including the scheme and query, and `*` matches any run of characters:
+
+```yaml
+patterns: ["https://*.atlassian.net/wiki/*"]
+```
+
+`ext:pdf` in `patterns` matches the file extension, like `extensions`.
+
+## Extensions
+
+`pdf`, `.pdf` and `ext:pdf` are equivalent. Matching ignores case.
+
+## Exceptions
+
+A `picker` rule above a broader `open` rule carves out an exception. In the first example, links to
+`example.com/admin` always ask, and the rest of `example.com` opens in the work profile.
+
+## When a rule cannot open
+
+An `open` rule falls back to the picker, with the reason shown, when its profile:
+
+- is not installed or not detected,
+- is hidden with `browsers.hidden`, or
+- is an `email:` selector that matches no profile or more than one.
+
+## Redirects
+
+With `routing.unwrap_redirects: true` (the default), Flipper resolves Microsoft SafeLinks and Google `/url`
+redirect links (on `google.com` and `google.co.uk`), up to six levels deep, before matching. Rules always see the real destination. Unwrapping
+reads the target from the URL itself; Flipper makes no network requests.
+
+<Aside>
+	Need the picker for everything for a while? `flipper --suspend` skips all rules until `flipper --resume`, without
+	deleting any.
+</Aside>

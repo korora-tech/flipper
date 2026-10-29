@@ -1,0 +1,310 @@
+---
+// A static rendition of Flipper's link picker, following the layout, labels
+// and colours in src/ui.rs. Hovering a row selects it, as in the app.
+const profiles = [
+	{ browser: 'Google Chrome', profile: 'Work', detail: 'ada@work.example' },
+	{ browser: 'Google Chrome', profile: 'Personal', detail: 'ada@home.example' },
+	{ browser: 'Firefox', profile: 'default-release · Work', detail: 'firefox:x7k2.default-release#container-2' },
+	{ browser: 'Brave', profile: 'Default', detail: 'brave:Default' },
+];
+---
+
+<figure class="picker" aria-label="The Flipper link picker">
+	<div class="picker-panel">
+		<header class="picker-head">
+			<span class="picker-mark" aria-hidden="true">⇄</span>
+			<span class="picker-name">
+				<strong>Flipper</strong>
+				<small>BROWSER ROUTER</small>
+			</span>
+			<span class="picker-button">Settings</span>
+			<span class="picker-button">Close</span>
+		</header>
+		<div class="picker-destination">
+			<p class="picker-host">acme.sharepoint.com</p>
+			<p class="picker-url">
+				https://acme.sharepoint.com/sites/finance/Q3-forecast.xlsx&nbsp;&nbsp;← unwrapped from
+				eur01.safelinks.protection.outlook.com
+			</p>
+			<p class="picker-office">Office file · Excel spreadsheet</p>
+		</div>
+		<div class="picker-search">
+			<span aria-hidden="true">⌕</span>
+			<span>Filter profiles, or paste a link to open…</span>
+		</div>
+		<ul class="picker-list">
+			{
+				profiles.map((p, i) => (
+					<li class:list={['picker-row', { selected: i === 0 }]}>
+						<span class="picker-icon" aria-hidden="true">
+							{p.browser[0]}
+						</span>
+						<span class="picker-text">
+							<span>
+								<strong>{p.browser}</strong> <span class="picker-profile">{p.profile}</span>
+							</span>
+							<small>{p.detail}</small>
+						</span>
+						<kbd>Ctrl+{i + 1}</kbd>
+					</li>
+				))
+			}
+		</ul>
+		<div class="picker-actions">
+			<span class="picker-button">Always</span>
+			<span class="picker-button">Always ask</span>
+			<span class="picker-button">Safety check</span>
+		</div>
+		<p class="picker-footer">↑↓ select &nbsp; Enter open once &nbsp; Ctrl+Enter Always &nbsp; Ctrl+1–0 open directly &nbsp; Esc close</p>
+	</div>
+</figure>
+
+<script>
+	for (const list of document.querySelectorAll('.picker-list')) {
+		for (const row of list.querySelectorAll('.picker-row')) {
+			row.addEventListener('mouseenter', () => {
+				list.querySelector('.selected')?.classList.remove('selected');
+				row.classList.add('selected');
+			});
+		}
+	}
+</script>
+
+<style>
+	.picker {
+		margin: 0;
+		--p-panel: #10151f;
+		--p-border: #344156;
+		--p-title: #f3f6fb;
+		--p-text: #f2f5fa;
+		--p-profile: #b6c1d2;
+		--p-muted: #91a0b5;
+		--p-faint: #8190a6;
+		--p-row: #151b28;
+		--p-row-selected: #24344e;
+		--p-field: #171e2a;
+		--p-field-border: #303b4d;
+		--p-kbd: #202b3d;
+		--p-kbd-text: #b8c7df;
+		--p-icon: #26354f;
+		--p-icon-text: #e7edf9;
+		--p-mark: #334c74;
+		--p-mark-text: #eaf1fd;
+		--p-office: #ffc77d;
+		--p-button: #1b2333;
+	}
+	@media (prefers-color-scheme: light) {
+		:root:not([data-theme='dark']) .picker {
+			--p-panel: #ffffff;
+			--p-border: #d8dee9;
+			--p-title: #182333;
+			--p-text: #202b38;
+			--p-profile: #546174;
+			--p-muted: #637185;
+			--p-faint: #778396;
+			--p-row: #f6f7f9;
+			--p-row-selected: #e7efff;
+			--p-field: #f3f5f8;
+			--p-field-border: #d7dde6;
+			--p-kbd: #e8edf4;
+			--p-kbd-text: #48566a;
+			--p-icon: #e8edf5;
+			--p-icon-text: #26354f;
+			--p-mark: #dce8fb;
+			--p-mark-text: #2a4e83;
+			--p-office: #9b5a00;
+			--p-button: #eef1f5;
+		}
+	}
+	:root[data-theme='light'] .picker {
+		--p-panel: #ffffff;
+		--p-border: #d8dee9;
+		--p-title: #182333;
+		--p-text: #202b38;
+		--p-profile: #546174;
+		--p-muted: #637185;
+		--p-faint: #778396;
+		--p-row: #f6f7f9;
+		--p-row-selected: #e7efff;
+		--p-field: #f3f5f8;
+		--p-field-border: #d7dde6;
+		--p-kbd: #e8edf4;
+		--p-kbd-text: #48566a;
+		--p-icon: #e8edf5;
+		--p-icon-text: #26354f;
+		--p-mark: #dce8fb;
+		--p-mark-text: #2a4e83;
+		--p-office: #9b5a00;
+		--p-button: #eef1f5;
+	}
+
+	.picker-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding: 1.25rem;
+		border: 1px solid var(--p-border);
+		border-radius: 18px;
+		background: var(--p-panel);
+		color: var(--p-text);
+		box-shadow:
+			0 30px 60px -20px rgb(0 0 0 / 0.45),
+			0 12px 24px -12px rgb(0 0 0 / 0.3);
+		font-size: 0.875rem;
+		line-height: 1.35;
+		text-align: left;
+	}
+	p {
+		margin: 0;
+	}
+	.picker-head {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.picker-mark {
+		display: grid;
+		place-items: center;
+		flex: none;
+		width: 42px;
+		height: 42px;
+		border-radius: 13px;
+		background: var(--p-mark);
+		color: var(--p-mark-text);
+		font-size: 20px;
+	}
+	.picker-name {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+	}
+	.picker-name strong {
+		color: var(--p-title);
+		font-size: 1.25rem;
+	}
+	.picker-name small {
+		color: var(--p-muted);
+		font-size: 0.7rem;
+		letter-spacing: 0.04em;
+	}
+	.picker-button {
+		padding: 0.35rem 0.7rem;
+		border: 1px solid var(--p-field-border);
+		border-radius: 8px;
+		background: var(--p-button);
+		color: var(--p-text);
+		font-size: 0.8rem;
+		white-space: nowrap;
+	}
+	.picker-destination {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+	.picker-host {
+		color: var(--p-title);
+		font-size: 1.375rem;
+		font-weight: 600;
+	}
+	.picker-url {
+		color: var(--p-muted);
+		overflow-wrap: anywhere;
+	}
+	.picker-office {
+		color: var(--p-office);
+	}
+	.picker-search {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		height: 50px;
+		padding: 0 0.75rem;
+		border: 1px solid var(--p-field-border);
+		border-radius: 10px;
+		background: var(--p-field);
+		color: var(--p-faint);
+		font-size: 0.95rem;
+	}
+	.picker-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.picker-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		min-height: 58px;
+		padding: 0 0.75rem;
+		border-radius: 12px;
+		background: var(--p-row);
+		cursor: default;
+		transition: background 80ms ease;
+	}
+	.picker-row.selected {
+		background: var(--p-row-selected);
+	}
+	.picker-icon {
+		display: grid;
+		place-items: center;
+		flex: none;
+		width: 36px;
+		height: 36px;
+		border-radius: 11px;
+		background: var(--p-icon);
+		color: var(--p-icon-text);
+		font-size: 16px;
+		font-weight: 700;
+	}
+	.picker-text {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		gap: 0.125rem;
+		min-width: 0;
+	}
+	.picker-profile {
+		color: var(--p-profile);
+		font-size: 0.8rem;
+	}
+	.picker-text small {
+		overflow: hidden;
+		color: var(--p-muted);
+		font-size: 0.72rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	kbd {
+		flex: none;
+		padding: 0.25rem 0.5rem;
+		border-radius: 7px;
+		background: var(--p-kbd);
+		color: var(--p-kbd-text);
+		font-family: inherit;
+		font-size: 0.72rem;
+	}
+	.picker-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.picker-footer {
+		color: var(--p-faint);
+		font-size: 0.72rem;
+	}
+
+	@media (max-width: 520px) {
+		.picker-panel {
+			padding: 1rem;
+		}
+		.picker-head .picker-button {
+			display: none;
+		}
+		.picker-footer {
+			display: none;
+		}
+	}
+</style>

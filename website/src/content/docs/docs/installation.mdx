@@ -1,0 +1,109 @@
+---
+title: Installation
+description: Install Flipper with Nix and make it your default browser.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Flipper runs on Linux, on x86_64 and aarch64. It is packaged as a Nix flake.
+
+## Try it without installing
+
+```sh
+nix run github:korora-tech/flipper
+```
+
+Without a URL, Flipper opens its settings window. Pass a link to see the picker:
+
+```sh
+nix run github:korora-tech/flipper -- https://example.com
+```
+
+## Install
+
+<Tabs>
+<TabItem label="Home Manager">
+
+Add the flake as an input and enable the module. `defaultBrowser = true` sets Flipper as the handler for
+`http`, `https` and `text/html`.
+
+```nix
+{
+  inputs.flipper.url = "github:korora-tech/flipper";
+
+  # In your Home Manager configuration:
+  imports = [ inputs.flipper.homeModules.default ];
+
+  programs.flipper = {
+    enable = true;
+    defaultBrowser = true;
+  };
+}
+```
+
+See [Home Manager](/docs/home-manager/) for every option.
+
+</TabItem>
+<TabItem label="Nix profile">
+
+```sh
+nix profile install github:korora-tech/flipper
+```
+
+Then register Flipper as the default browser, as described below.
+
+</TabItem>
+<TabItem label="From source">
+
+```sh
+git clone https://github.com/korora-tech/flipper
+cd flipper
+nix build
+./result/bin/flipper --help
+```
+
+`nix develop` gives you a shell with the Rust toolchain and the libraries GPUI needs.
+
+</TabItem>
+</Tabs>
+
+## Make Flipper the default browser
+
+Outside Home Manager, register Flipper with your desktop:
+
+<Steps>
+
+1. Make sure a real browser is the current default for web links. Flipper refuses to register when no
+   previous handler is set, because it would have nothing to restore.
+
+2. Register:
+
+   ```sh
+   flipper --register
+   ```
+
+   Flipper saves the current handlers for `x-scheme-handler/http`, `x-scheme-handler/https` and
+   `text/html`, then sets `com.korora.Flipper.desktop` for all three.
+
+3. Click a link in any application. The picker opens.
+
+</Steps>
+
+To undo it:
+
+```sh
+flipper --uninstall
+```
+
+For each type still handled by Flipper, this restores the saved handler. Types you have pointed elsewhere since are left alone.
+
+<Aside type="note">
+	When `config.yaml` is managed by Home Manager, `--register` and `--uninstall` refuse to run. Set
+	`programs.flipper.defaultBrowser` instead; Home Manager owns `mimeapps.list`.
+</Aside>
+
+## Next steps
+
+- [Use the picker](/docs/picker/) and its keyboard shortcuts.
+- [Write routing rules](/docs/rules/) so common links skip the picker.
+- [Install the browser extension](/docs/browser-extensions/) for context menus and Firefox containers.
