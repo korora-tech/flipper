@@ -8,8 +8,8 @@ and served as static assets by a Cloudflare Worker.
 npm ci
 npm run dev       # http://localhost:4321
 npm run build     # type-check and build into dist/
-npm run preview   # build, then serve dist/ with wrangler dev
-npm run deploy    # build, then deploy with wrangler
+npm run preview   # serve the site locally with cf dev
+npm run deploy    # build, then deploy with cf
 ```
 
 Node 24 is expected (`.node-version`); Astro needs at least 22.22.
@@ -19,16 +19,13 @@ Node 24 is expected (`.node-version`); Astro needs at least 22.22.
   step with the app.
 - `src/content/docs/docs/` holds the documentation, served under `/docs/`.
   The sidebar is set in `astro.config.mjs`.
-- `wrangler.jsonc` serves `dist/` on the custom domain `flipper.korora.tech`.
-  Custom domains need the `korora.tech` zone in the same Cloudflare account;
-  Wrangler creates the DNS record and certificate on first deploy.
+- `cloudflare.config.ts` serves the site on the custom domain
+  `flipper.korora.tech`. Custom domains need the `korora.tech` zone in the same
+  Cloudflare account; cf creates the DNS record and certificate on first
+  deploy.
 
 ## Deployment
 
 `.github/workflows/website.yaml` builds every pull request that touches
-`website/` and deploys from `main`. It needs two repository secrets:
-
-| Secret | Value |
-| --- | --- |
-| `CLOUDFLARE_API_TOKEN` | An API token with Workers Scripts: Edit and, for the custom domain, Zone: Workers Routes: Edit and DNS: Edit on `korora.tech` |
-| `CLOUDFLARE_ACCOUNT_ID` | The account that owns `korora.tech` |
+`website/` and deploys from `main` with `cf deploy`, using the Korora Tech
+organization's Cloudflare token (`CLOUDLFLARE_API_TOKEN`).
