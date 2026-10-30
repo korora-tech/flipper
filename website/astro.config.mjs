@@ -1,10 +1,13 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import cloudflare from '@astrojs/cloudflare';
 
 export default defineConfig({
 	site: 'https://flipper.korora.tech',
 	trailingSlash: 'ignore',
+	// Writes the Build Output cf deploys; the Worker serves only static assets.
+	adapter: cloudflare(),
 	integrations: [
 		starlight({
 			title: 'Flipper',
