@@ -27,5 +27,9 @@ Node 24 is expected (`.node-version`); Astro needs at least 22.22.
 ## Deployment
 
 `.github/workflows/website.yaml` builds every pull request that touches
-`website/` and deploys from `main` with `cf deploy`, using the Korora Tech
-organization's Cloudflare token (`CLOUDLFLARE_API_TOKEN`).
+`website/` and deploys from `main` with `cf deploy`. The deploy job runs in the
+`production` environment and logs in to Infisical over OIDC as the Korora
+Tech CI identity, which reads the Korora Tech Cloudflare token
+(`CLOUDFLARE_API_TOKEN`). The identity, this repository's `production`
+environment and its `INFISICAL_MACHINE_IDENTITY_ID` secret are managed in
+[korora-tech/korora-tech](https://github.com/korora-tech/korora-tech).
