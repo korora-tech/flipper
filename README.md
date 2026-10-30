@@ -11,7 +11,7 @@ Flipper uses a GPUI interface and YAML configuration.
 | Feature | Behavior | Access |
 | --- | --- | --- |
 | Default-browser handoff and restore | Register and restore the user's previous MIME handlers | `flipper --register`, `flipper --uninstall` |
-| Browser/profile picker | Searchable profile cards with icons, account email, number shortcuts, Escape | Picker |
+| Browser/profile picker | Compact searchable profile list with icons and account email; 1–0 open a profile (Ctrl+1–0 while filtering), Escape | Picker |
 | Chromium profile detection | Chrome, Edge, Brave, Vivaldi, Opera, Chromium; include native and sandboxed data roots | Auto-detected |
 | Firefox profile detection | Firefox (Beta, Developer Edition, Nightly, ESR), Zen, Floorp, LibreWolf, Waterfox, Mullvad; installed browsers only; Firefox profiles in `~/.mozilla/firefox` or `$XDG_CONFIG_HOME/mozilla/firefox` | Auto-detected |
 | Email profile selection | Chrome Local State `profile.info_cache.*.user_name`; exact, unique matches only | YAML rule selector and picker labels |
@@ -163,7 +163,7 @@ built, so an invalid configuration fails `home-manager switch`.
       appearance = {
         theme = "dark"; # system, light or dark
         dim = true;
-        width = 760;
+        width = 560;
       };
       routing = {
         mode = "picker"; # or "always" with defaultProfile

@@ -3,7 +3,7 @@ version: 1
 appearance:
   theme: system
   dim: true
-  width: 760
+  width: 560
 
 routing:
   mode: picker

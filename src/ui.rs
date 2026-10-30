@@ -36,17 +36,34 @@ actions!(
     ]
 );
 
-const ROW_HEIGHT: f32 = 68.;
-const MAX_ROWS: usize = 7;
+const ROW_HEIGHT: f32 = 40.;
+const MAX_ROWS: usize = 8;
+const FALLBACK_HEIGHT: f32 = 560.;
+
+/// Set on the picker while the filter is empty, so bare digits open a profile.
+/// Once something is typed, digits go to the filter (emails, profile names).
+const NUMBER_KEYS: &str = "number_keys";
+const NUMBER_KEYS_CONTEXT: &str = "Flipper && number_keys > Input";
 
 pub fn bind_keys(cx: &mut App) {
     let context = Some("Flipper > Input");
+    let digits = Some(NUMBER_KEYS_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("down", MoveDown, context),
         KeyBinding::new("up", MoveUp, context),
         KeyBinding::new("enter", OpenSelected, context),
         KeyBinding::new("escape", Dismiss, context),
         KeyBinding::new("ctrl-enter", SaveAlways, context),
+        KeyBinding::new("1", SelectOne, digits),
+        KeyBinding::new("2", SelectTwo, digits),
+        KeyBinding::new("3", SelectThree, digits),
+        KeyBinding::new("4", SelectFour, digits),
+        KeyBinding::new("5", SelectFive, digits),
+        KeyBinding::new("6", SelectSix, digits),
+        KeyBinding::new("7", SelectSeven, digits),
+        KeyBinding::new("8", SelectEight, digits),
+        KeyBinding::new("9", SelectNine, digits),
+        KeyBinding::new("0", SelectZero, digits),
         KeyBinding::new("ctrl-1", SelectOne, context),
         KeyBinding::new("ctrl-2", SelectTwo, context),
         KeyBinding::new("ctrl-3", SelectThree, context),
@@ -151,7 +168,7 @@ fn window_options(appearance: &config::Appearance, layer_shell: bool) -> WindowO
         titlebar: None,
         window_bounds: Some(WindowBounds::Windowed(Bounds {
             origin: Point::default(),
-            size: size(px(appearance.width + 40.), px(820.)),
+            size: size(px(appearance.width + 40.), px(FALLBACK_HEIGHT)),
         })),
         app_id: Some("com.korora.Flipper".into()),
         window_background: WindowBackgroundAppearance::Transparent,
@@ -203,7 +220,8 @@ impl PickerView {
         cx: &mut Context<Self>,
     ) -> Self {
         let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Filter profiles, or paste a link to open…")
+            InputState::new(window, cx)
+                .placeholder("Filter by browser, profile or email, or paste a link…")
         });
         input.update(cx, |input, cx| input.focus(window, cx));
         let subscriptions = vec![cx.subscribe(&input, |this, input, event: &InputEvent, cx| {
@@ -508,17 +526,18 @@ impl PickerView {
         let profile = &self.profiles[profile_index];
         let selected = self.selected == visible_index;
         let icon = browser_icon(&profile.icon_name)
-            .map(|path| img(path).size(px(36.)).into_any_element())
+            .map(|path| img(path).size(px(22.)).flex_none().into_any_element())
             .unwrap_or_else(|| {
                 div()
-                    .size(px(36.))
+                    .size(px(22.))
+                    .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(11.))
+                    .rounded(px(6.))
                     .bg(theme_color(dark, 0x26354f, 0xe8edf5))
                     .text_color(theme_color(dark, 0xe7edf9, 0x26354f))
-                    .text_size(px(16.))
+                    .text_xs()
                     .font_weight(FontWeight::BOLD)
                     .child(
                         profile
@@ -534,10 +553,10 @@ impl PickerView {
             .id(format!("profile-{visible_index}"))
             .w_full()
             .h(px(ROW_HEIGHT))
-            .px_3()
-            .gap_3()
+            .px_2()
+            .gap_2()
             .items_center()
-            .rounded(px(12.))
+            .rounded(px(8.))
             .cursor_pointer()
             .when(selected, |row| {
                 row.bg(theme_color(dark, 0x24344e, 0xe7efff))
@@ -552,48 +571,49 @@ impl PickerView {
             .on_click(cx.listener(move |this, _, _, cx| this.open_profile(profile_index, cx)))
             .child(icon)
             .child(
-                v_flex()
+                h_flex()
                     .flex_1()
-                    .gap_0p5()
+                    .min_w_0()
+                    .gap_2()
+                    .items_baseline()
+                    .text_sm()
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_color(theme_color(dark, 0xf2f5fa, 0x202b38))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(profile.browser_name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_color(theme_color(dark, 0xb6c1d2, 0x546174))
-                                    .text_sm()
-                                    .child(profile.profile_name.clone()),
-                            ),
+                        div()
+                            .flex_none()
+                            .text_color(theme_color(dark, 0xf2f5fa, 0x202b38))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(profile.browser_name.clone()),
                     )
                     .child(
                         div()
+                            .flex_none()
+                            .text_color(theme_color(dark, 0xb6c1d2, 0x546174))
+                            .child(profile.profile_name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
                             .text_color(theme_color(dark, 0x93a2b9, 0x667386))
                             .text_xs()
                             .child(profile.email.clone().unwrap_or_else(|| profile.id.clone())),
                     ),
             )
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .rounded(px(7.))
-                    .bg(theme_color(dark, 0x202b3d, 0xe8edf4))
-                    .text_color(theme_color(dark, 0xb8c7df, 0x48566a))
-                    .text_xs()
-                    .child(if visible_index < 9 {
-                        format!("Ctrl+{}", visible_index + 1)
-                    } else if visible_index == 9 {
-                        "Ctrl+0".into()
-                    } else {
-                        "".into()
-                    }),
+            .when_some(
+                shortcut_label(visible_index, self.query.is_empty()),
+                |row, label| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .px_1p5()
+                            .rounded(px(5.))
+                            .bg(theme_color(dark, 0x202b3d, 0xe8edf4))
+                            .text_color(theme_color(dark, 0xb8c7df, 0x48566a))
+                            .text_xs()
+                            .child(label),
+                    )
+                },
             );
 
         if selected {
@@ -614,12 +634,12 @@ impl PickerView {
         let label = label.into();
         div()
             .id(id.into())
-            .px_3()
-            .py_2()
-            .rounded(px(8.))
+            .px_2()
+            .py_0p5()
+            .rounded(px(6.))
             .bg(theme_color(dark, 0x24334a, 0xe8edf4))
             .text_color(theme_color(dark, 0xdce6f5, 0x273449))
-            .text_sm()
+            .text_xs()
             .cursor_pointer()
             .on_click(listener)
             .child(label)
@@ -660,7 +680,8 @@ impl Render for PickerView {
         let list = if visible.is_empty() {
             div()
                 .w_full()
-                .py_8()
+                .py_4()
+                .text_sm()
                 .text_center()
                 .text_color(theme_color(dark, 0xa1aec2, 0x657386))
                 .child("No visible browser profiles. Add a custom browser in YAML or unhide one in Settings.")
@@ -679,16 +700,15 @@ impl Render for PickerView {
                 }),
             )
             .track_scroll(&self.scroll)
-            .h(px(ROW_HEIGHT * MAX_ROWS as f32 + 10.))
+            .h(px(ROW_HEIGHT * visible.len().min(MAX_ROWS) as f32))
             .into_any_element()
         };
 
         let mut panel = v_flex()
             .w(px(self.config.appearance.width))
-            .max_h(px(900.))
-            .gap_3()
-            .p_5()
-            .rounded(px(18.))
+            .gap_2()
+            .p_3()
+            .rounded(px(12.))
             .border_1()
             .border_color(theme_color(dark, 0x344156, 0xd8dee9))
             .bg(theme_color(dark, 0x10151f, 0xffffff))
@@ -696,37 +716,37 @@ impl Render for PickerView {
 
         panel = panel.child(
             h_flex()
-                .items_center()
-                .gap_3()
-                .child(
-                    div()
-                        .size(px(42.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(13.))
-                        .bg(theme_color(dark, 0x334c74, 0xdce8fb))
-                        .text_color(theme_color(dark, 0xeaf1fd, 0x2a4e83))
-                        .text_size(px(20.))
-                        .child("⇄"),
-                )
+                .items_start()
+                .gap_2()
                 .child(
                     v_flex()
                         .flex_1()
-                        .gap_0p5()
+                        .min_w_0()
                         .child(
                             div()
-                                .text_xl()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(theme_color(dark, 0xf1f5fb, 0x202b38))
-                                .child("Flipper"),
+                                .truncate()
+                                .text_base()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme_color(dark, 0xf3f6fb, 0x182333))
+                                .child(title),
                         )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme_color(dark, 0x8e9db3, 0x68768a))
-                                .child("BROWSER ROUTER"),
-                        ),
+                        .when_some(subtitle, |this, subtitle| {
+                            this.child(
+                                div()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(theme_color(dark, 0x91a0b5, 0x637185))
+                                    .child(subtitle),
+                            )
+                        })
+                        .when_some(doc_label, |this, label| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme_color(dark, 0xffc77d, 0x9b5a00))
+                                    .child(format!("Office file · {label}")),
+                            )
+                        }),
                 )
                 .child(self.button(
                     "settings-toggle",
@@ -742,45 +762,19 @@ impl Render for PickerView {
                 )),
         );
         panel = panel.child(
-            v_flex()
-                .gap_1()
-                .child(
-                    div()
-                        .text_size(px(22.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme_color(dark, 0xf3f6fb, 0x182333))
-                        .child(title),
-                )
-                .when_some(subtitle, |this, subtitle| {
-                    this.child(
-                        div()
-                            .text_sm()
-                            .text_color(theme_color(dark, 0x91a0b5, 0x637185))
-                            .child(subtitle),
-                    )
-                })
-                .when_some(doc_label, |this, label| {
-                    this.child(
-                        div()
-                            .text_sm()
-                            .text_color(theme_color(dark, 0xffc77d, 0x9b5a00))
-                            .child(format!("Office file · {label}")),
-                    )
-                }),
-        );
-        panel = panel.child(
             h_flex()
                 .w_full()
-                .h(px(50.))
-                .px_3()
+                .h(px(34.))
+                .px_2()
                 .gap_2()
                 .items_center()
-                .rounded(px(10.))
+                .rounded(px(8.))
                 .border_1()
                 .border_color(theme_color(dark, 0x303b4d, 0xd7dde6))
                 .bg(theme_color(dark, 0x171e2a, 0xf3f5f8))
                 .child(
                     div()
+                        .text_sm()
                         .text_color(theme_color(dark, 0x8392a9, 0x778396))
                         .child("⌕"),
                 )
@@ -788,9 +782,9 @@ impl Render for PickerView {
                     div().flex_1().child(
                         Input::new(&self.input)
                             .appearance(false)
-                            .h(px(46.))
+                            .h(px(30.))
                             .p_0()
-                            .text_size(px(15.)),
+                            .text_sm(),
                     ),
                 ),
         );
@@ -799,7 +793,7 @@ impl Render for PickerView {
         let selected_profile = visible
             .get(self.selected)
             .and_then(|index| self.profiles.get(*index));
-        let mut actions = h_flex().gap_2().items_center();
+        let mut actions = h_flex().flex_none().gap_1().items_center();
         if let Some(profile) = selected_profile {
             let index = visible[self.selected];
             let id = profile.id.clone();
@@ -836,12 +830,40 @@ impl Render for PickerView {
                     dark,
                 ));
         }
-        panel = panel.child(actions);
+        let open_keys = if self.query.is_empty() {
+            "1–0"
+        } else {
+            "Ctrl+1–0"
+        };
+        let hint = if self.prepared.is_some() && self.read_only {
+            format!("{open_keys} or Enter open · Ctrl+Enter copy Nix · Esc")
+        } else if self.prepared.is_some() {
+            format!("{open_keys} or Enter open · Ctrl+Enter always · Esc")
+        } else {
+            "Paste a URL and press Enter, then choose a profile".into()
+        };
+        panel = panel.child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .items_center()
+                .child(actions)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_right()
+                        .text_xs()
+                        .text_color(theme_color(dark, 0x8190a6, 0x778396))
+                        .child(hint),
+                ),
+        );
 
         if let Some(status) = self.status.as_deref() {
             panel = panel.child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(theme_color(dark, 0xf0bd83, 0x855300))
                     .child(status.to_owned()),
             );
@@ -854,29 +876,19 @@ impl Render for PickerView {
                     .child(format!("Config warning: {warning}")),
             );
         }
-        let footer = if self.prepared.is_some() && self.read_only {
-            "↑↓ select   Enter open once   Ctrl+Enter copy rule as Nix   Ctrl+1–0 open directly   Esc close"
-        } else if self.prepared.is_some() {
-            "↑↓ select   Enter open once   Ctrl+Enter Always   Ctrl+1–0 open directly   Esc close"
-        } else {
-            "Paste a URL and press Enter, then choose a profile; configure rules and profiles in YAML"
-        };
-        panel = panel.child(
-            div()
-                .pt_1()
-                .text_xs()
-                .text_color(theme_color(dark, 0x8190a6, 0x778396))
-                .child(footer),
-        );
-
         let dim = if self.config.appearance.dim {
             if dark { 0x080d16d9 } else { 0x17223588 }
         } else {
             0x00000000
         };
+        let mut context = KeyContext::default();
+        context.add("Flipper");
+        if self.query.is_empty() {
+            context.add(NUMBER_KEYS);
+        }
         div()
             .size_full()
-            .key_context("Flipper")
+            .key_context(context)
             .on_action(cx.listener(Self::move_down))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::open_selected_action))
@@ -919,4 +931,47 @@ fn browser_icon(name: &str) -> Option<PathBuf> {
 
 fn theme_color(dark: bool, dark_hex: u32, light_hex: u32) -> Rgba {
     rgb(if dark { dark_hex } else { light_hex })
+}
+
+/// The key that opens a row: bare digits until the filter has text, then Ctrl.
+fn shortcut_label(visible_index: usize, bare_digits: bool) -> Option<String> {
+    let digit = match visible_index {
+        0..=8 => visible_index + 1,
+        9 => 0,
+        _ => return None,
+    };
+    Some(if bare_digits {
+        digit.to_string()
+    } else {
+        format!("Ctrl+{digit}")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NUMBER_KEYS_CONTEXT, shortcut_label};
+    use gpui_kit::{KeyBindingContextPredicate, KeyContext};
+
+    fn stack(contexts: &[&str]) -> Vec<KeyContext> {
+        contexts
+            .iter()
+            .map(|context| KeyContext::parse(context).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn bare_digits_only_apply_while_the_filter_is_empty() {
+        let predicate = KeyBindingContextPredicate::parse(NUMBER_KEYS_CONTEXT).unwrap();
+        assert!(predicate.eval(&stack(&["Flipper number_keys", "Input"])));
+        assert!(!predicate.eval(&stack(&["Flipper", "Input"])));
+        assert!(!predicate.eval(&stack(&["Flipper number_keys"])));
+    }
+
+    #[test]
+    fn shortcut_labels_follow_the_filter() {
+        assert_eq!(shortcut_label(0, true).as_deref(), Some("1"));
+        assert_eq!(shortcut_label(9, true).as_deref(), Some("0"));
+        assert_eq!(shortcut_label(2, false).as_deref(), Some("Ctrl+3"));
+        assert_eq!(shortcut_label(10, true), None);
+    }
 }
