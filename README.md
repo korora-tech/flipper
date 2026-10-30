@@ -254,3 +254,8 @@ Set Flipper as the desktop browser with `flipper --register`; `--uninstall`
 restores previous handlers that still point at Flipper. Import or export YAML
 with `--import PATH` and `--export [PATH|-]`; `--export` writes the effective
 configuration, including local overrides.
+
+## Website
+
+The site at <https://flipper.korora.tech> is in `website/`: an Astro and
+Starlight build deployed to Cloudflare. See `website/README.md`.

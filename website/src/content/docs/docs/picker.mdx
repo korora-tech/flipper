@@ -1,0 +1,49 @@
+---
+title: Using the picker
+description: Choose a browser profile for a link, save rules, and open links by hand.
+---
+
+When a link matches no rule, or matches a `picker` rule, Flipper shows the picker. On Wayland compositors
+that support layer-shell it appears as an overlay; on X11, or where the compositor rejects layer-shell, it
+opens as a normal window.
+
+## What the picker shows
+
+- **The destination.** The host name, then the full URL. When Flipper unwrapped a Microsoft SafeLinks or
+  Google redirect, it says which host the link was unwrapped from.
+- **An Office cue.** Word, Excel and PowerPoint files are labelled, so you can send them to the profile that
+  is signed in to the right tenant.
+- **Your profiles.** Each row shows the browser, the profile name, and the signed-in email for Chromium
+  profiles or the profile ID otherwise. Type in the search field to filter them.
+
+## Keyboard
+
+| Key | Action |
+| --- | --- |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Move the selection |
+| <kbd>Enter</kbd> | Open the link once in the selected profile |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Open it and save an **Always** rule |
+| <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd> | Open directly in the first ten profiles |
+| <kbd>Esc</kbd> | Close without opening anything |
+
+## Actions
+
+**Always** saves a rule that opens links to this host, and its subdomains, in the selected profile, then
+opens the link. **Always ask** saves a `picker` rule for the host, which forces the picker even when a broader
+rule later in the list would open it. A saved rule replaces any rule with the same conditions and goes ahead of your other rules, except more
+specific ones for the same host (with a path, pattern or extension, or a subdomain), which stay in front.
+
+**Safety check** opens Google's Transparency Report for the destination in the selected profile. It runs
+only when you press it; Flipper never sends links anywhere on its own.
+
+When the configuration is managed by Home Manager with overrides disabled, the buttons read **Copy rule** and
+**Copy ask rule** and copy the rule as a Nix snippet for `programs.flipper.settings.rules`.
+
+## Settings and manual open
+
+Run `flipper` with no arguments, or `flipper --settings`, to open the settings window. It has pages for
+routing, browsers, rules and appearance, and the profile ID of every detected profile is listed under
+Browsers.
+
+To route a link by hand, paste it into the search field and press <kbd>Enter</kbd>. Flipper loads it as the
+link to open, and you choose a profile as usual.

@@ -1,0 +1,74 @@
+---
+title: Browser extensions
+description: Add "Open link with Flipper" to Chrome and Firefox, and open links in Firefox containers.
+---
+
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The extensions add **Open link with Flipper** to the context menu of links and pages. They talk to Flipper
+through a native messaging host, so the link goes to the same picker and rules as any other.
+
+The Firefox add-on also opens links in Firefox containers, which the command line cannot do.
+
+<Tabs>
+<TabItem label="Chrome and Chromium">
+
+<Steps>
+
+1. Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked** and select
+   `extensions/chrome` from the Flipper source. With the Nix package, it is in `share/flipper/extensions/chrome`.
+
+2. Copy the extension ID shown on the extension's card.
+
+3. Install the native messaging host:
+
+   ```sh
+   flipper --install-native-host chrome EXTENSION_ID
+   ```
+
+</Steps>
+
+With Home Manager, set `programs.flipper.nativeMessaging.chromium = [ "EXTENSION_ID" ];` instead of step 3.
+
+</TabItem>
+<TabItem label="Firefox">
+
+<Steps>
+
+1. Install the add-on. With Home Manager, add `inputs.flipper.packages.${system}.firefox-addon` to
+   `programs.firefox.profiles.<name>.extensions.packages`; the package is the add-on as
+   `flipper@korora.tech.xpi`.
+
+   To try it without Nix, load `extensions/firefox/manifest.json` as a temporary add-on from
+   `about:debugging`. That gives you the context menu until Firefox restarts, but not containers: Flipper
+   lists those only when the add-on is installed in the profile.
+
+2. Install the native messaging host:
+
+   ```sh
+   flipper --install-native-host firefox flipper@korora.tech
+   ```
+
+   With Home Manager, set `programs.flipper.nativeMessaging.firefox = true;` instead.
+
+</Steps>
+
+</TabItem>
+</Tabs>
+
+## Firefox containers
+
+Flipper lists a Firefox profile's containers only when the add-on is installed in that profile as
+`extensions/flipper@korora.tech.xpi`. When you pick a container, Flipper launches Firefox with an `ext+flipper:`
+link; the add-on handles it and opens the URL in the chosen container. Multi-Account Containers site assignments
+still apply.
+
+Use a container in a rule with its profile ID:
+
+```yaml
+rules:
+  - name: GitHub in the Work container
+    domains: [github.com]
+    action: open
+    profile: firefox:abcd1234.default-release#container-2
+```

@@ -1,0 +1,395 @@
+---
+import { Code } from 'astro:components';
+import Base from '../layouts/Base.astro';
+import Picker from '../components/Picker.astro';
+import logo from '../assets/logo.svg?raw';
+
+const repo = 'https://github.com/korora-tech/flipper';
+
+const features = [
+	{
+		title: 'Finds every profile',
+		body: 'Chrome, Edge, Brave, Vivaldi, Opera and Chromium, plus Firefox editions, Zen, Floorp, LibreWolf, Waterfox and Mullvad. Native, Flatpak and Snap installs.',
+	},
+	{
+		title: 'Rules in plain YAML',
+		body: 'Match on domain, path, whole-URL wildcards or file extension. The first match wins, and picker rules carve exceptions out of broader ones.',
+	},
+	{
+		title: 'Route by account',
+		body: 'Point a rule at email:you@work.example and Flipper finds the Chromium profile signed in to it, without you looking up profile directories.',
+	},
+	{
+		title: 'Unwraps redirects',
+		body: 'Microsoft SafeLinks and Google redirect URLs, nested or not, are resolved locally before rules run, so you route on the real destination.',
+	},
+	{
+		title: 'Firefox containers',
+		body: 'Pick a container per link. The Flipper add-on opens it in the right one, and Multi-Account Containers site assignments still apply.',
+	},
+	{
+		title: 'Declarative with Nix',
+		body: 'A Home Manager module writes and validates the configuration at build time, sets the default browser, and installs the native messaging hosts.',
+	},
+];
+
+const rules = `rules:
+  # The first matching rule wins.
+  - name: Choose for admin
+    domains: [example.com]
+    paths: [/admin]
+    action: picker
+
+  - name: Company links
+    domains: [example.com, "*.example.org"]
+    action: open
+    profile: "email:you@example.com"
+
+  - name: GitHub in the Work container
+    domains: [github.com]
+    action: open
+    profile: firefox:abcd1234.default-release#container-2
+
+  - name: Documents
+    extensions: [pdf, docx]
+    action: picker`;
+
+const install = `# Try it
+nix run github:korora-tech/flipper
+
+# Install it, then make it the default browser
+nix profile install github:korora-tech/flipper
+flipper --register`;
+---
+
+<Base
+	title="Flipper: a browser and profile picker for Linux"
+	description="Flipper sits between your desktop and your browsers. It finds every Chrome and Firefox profile and opens each link in the right one, by rule or by asking."
+>
+	<header class="nav wrap">
+		<a class="brand" href="/" aria-label="Flipper home">
+			<span class="brand-mark" set:html={logo} />
+			<span>Flipper</span>
+		</a>
+		<nav aria-label="Main">
+			<a href="/docs/installation/">Docs</a>
+			<a href={repo}>GitHub</a>
+		</nav>
+	</header>
+
+	<main>
+		<section class="hero wrap">
+			<div class="hero-copy">
+				<p class="eyebrow">Browser and profile picker for Linux</p>
+				<h1>Every link opens in the right browser profile.</h1>
+				<p class="lede">
+					Flipper sits between your desktop and your browsers. It finds every Chrome and Firefox profile you
+					have, routes links with rules you write in YAML, and asks you when no rule applies.
+				</p>
+				<div class="cta">
+					<a class="button primary" href="/docs/installation/">Get started</a>
+					<a class="button" href={repo}>View on GitHub</a>
+				</div>
+				<p class="meta">Wayland and X11 · MIT licensed · No history, no telemetry</p>
+			</div>
+			<div class="hero-picker">
+				<Picker />
+			</div>
+		</section>
+
+		<section class="section wrap" aria-labelledby="features">
+			<h2 id="features">One handler for every link you click</h2>
+			<p class="section-lede">
+				Set Flipper as the default browser once. Links from chat, mail, terminals and documents all pass through
+				it.
+			</p>
+			<ul class="features">
+				{
+					features.map((f) => (
+						<li>
+							<h3>{f.title}</h3>
+							<p>{f.body}</p>
+						</li>
+					))
+				}
+			</ul>
+		</section>
+
+		<section class="section wrap split" aria-labelledby="rules">
+			<div>
+				<h2 id="rules">Rules you can read</h2>
+				<p>
+					Rules live in <code>~/.config/flipper/config.yaml</code> and run in order. Values inside a field are
+					alternatives; fields you fill in are combined. A link that matches no rule opens the picker, or your
+					default profile if you prefer.
+				</p>
+				<p>
+					Choosing <strong>Always</strong> in the picker writes the rule for you. Under Home Manager it is saved as a
+					local override, and <code>flipper --export-overrides --format nix</code> turns it into Nix.
+				</p>
+				<a class="more" href="/docs/rules/">How rules match →</a>
+			</div>
+			<div class="code">
+				<Code code={rules} lang="yaml" theme="github-dark-dimmed" />
+			</div>
+		</section>
+
+		<section class="section wrap split" aria-labelledby="install">
+			<div>
+				<h2 id="install">Install</h2>
+				<p>
+					Flipper is packaged as a Nix flake for x86_64 and aarch64 Linux. The flake also exports a Home Manager
+					module and the Firefox add-on.
+				</p>
+				<p>
+					<code>--register</code> saves your current handlers first, and <code>flipper --uninstall</code> restores
+					them.
+				</p>
+				<a class="more" href="/docs/installation/">Installation guide →</a>
+			</div>
+			<div class="code">
+				<Code code={install} lang="sh" theme="github-dark-dimmed" />
+			</div>
+		</section>
+	</main>
+
+	<footer class="footer wrap">
+		<span>Flipper is MIT licensed and built by <a href="https://korora.tech">Korora Tech</a>.</span>
+		<nav aria-label="Footer">
+			<a href="/docs/installation/">Docs</a>
+			<a href={repo}>Source</a>
+			<a href={`${repo}/issues`}>Issues</a>
+		</nav>
+	</footer>
+</Base>
+
+<style>
+	.wrap {
+		width: 100%;
+		max-width: 1160px;
+		margin: 0 auto;
+		padding: 0 1.5rem;
+	}
+
+	.nav {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 4.5rem;
+	}
+	.brand {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		color: var(--text);
+		font-size: 1.125rem;
+		font-weight: 700;
+		text-decoration: none;
+	}
+	.brand-mark :global(svg) {
+		display: block;
+		width: 32px;
+		height: 32px;
+	}
+	.nav nav {
+		display: flex;
+		gap: 1.5rem;
+	}
+	.nav nav a,
+	.footer nav a {
+		color: var(--muted);
+		text-decoration: none;
+	}
+	.nav nav a:hover,
+	.footer nav a:hover {
+		color: var(--text);
+	}
+
+	main {
+		/* Keep the picker's glow from widening the page on narrow screens. */
+		overflow-x: clip;
+	}
+	.hero {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+		gap: 4rem;
+		align-items: center;
+		padding-top: 4rem;
+		padding-bottom: 5rem;
+	}
+	.eyebrow {
+		margin: 0 0 1rem;
+		color: var(--amber);
+		font-size: 0.875rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+	}
+	h1 {
+		margin: 0;
+		font-size: clamp(2.25rem, 5vw, 3.5rem);
+		line-height: 1.08;
+		letter-spacing: -0.025em;
+		text-wrap: balance;
+	}
+	.lede {
+		max-width: 34rem;
+		margin: 1.5rem 0 0;
+		color: var(--muted);
+		font-size: 1.15rem;
+	}
+	.cta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-top: 2rem;
+	}
+	.button {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.7rem 1.25rem;
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		background: var(--bg-raised);
+		color: var(--text);
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.button:hover {
+		border-color: var(--accent);
+	}
+	.button.primary {
+		border-color: var(--accent);
+		background: var(--accent);
+		color: var(--button-text);
+	}
+	.button.primary:hover {
+		border-color: var(--accent-strong);
+		background: var(--accent-strong);
+	}
+	.meta {
+		margin: 1.5rem 0 0;
+		color: var(--muted);
+		font-size: 0.875rem;
+	}
+	.hero-picker {
+		position: relative;
+	}
+	.hero-picker::before {
+		position: absolute;
+		inset: -12% -8%;
+		z-index: -1;
+		background: radial-gradient(closest-side, var(--glow), transparent);
+		content: '';
+	}
+
+	.section {
+		padding-top: 4.5rem;
+		padding-bottom: 4.5rem;
+		border-top: 1px solid var(--border);
+	}
+	h2 {
+		margin: 0 0 1rem;
+		font-size: clamp(1.6rem, 3vw, 2.1rem);
+		line-height: 1.2;
+		letter-spacing: -0.015em;
+	}
+	.section-lede {
+		max-width: 40rem;
+		margin: 0;
+		color: var(--muted);
+		font-size: 1.075rem;
+	}
+	.features {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 1rem;
+		margin: 2.5rem 0 0;
+		padding: 0;
+		list-style: none;
+	}
+	.features li {
+		padding: 1.5rem;
+		border: 1px solid var(--border);
+		border-radius: 14px;
+		background: var(--bg-raised);
+	}
+	.features h3 {
+		margin: 0 0 0.5rem;
+		font-size: 1.05rem;
+	}
+	.features p {
+		margin: 0;
+		color: var(--muted);
+		font-size: 0.95rem;
+	}
+
+	.split {
+		display: grid;
+		grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+		gap: 3.5rem;
+		align-items: start;
+	}
+	.split p {
+		color: var(--muted);
+	}
+	.split p code {
+		color: var(--text);
+	}
+	.more {
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.code :global(pre) {
+		margin: 0;
+		padding: 1.25rem 1.5rem;
+		border: 1px solid var(--border);
+		border-radius: 14px;
+		font-size: 0.875rem;
+		line-height: 1.6;
+		overflow-x: auto;
+	}
+
+	.footer {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding-top: 2rem;
+		padding-bottom: 3rem;
+		border-top: 1px solid var(--border);
+		color: var(--muted);
+		font-size: 0.9rem;
+	}
+	.footer nav {
+		display: flex;
+		gap: 1.25rem;
+	}
+
+	@media (max-width: 960px) {
+		.hero,
+		.split {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 2.5rem;
+		}
+		.hero {
+			padding-top: 2rem;
+		}
+		.features {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	@media (max-width: 640px) {
+		.wrap {
+			padding: 0 1rem;
+		}
+		.features {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.section {
+			padding-top: 3rem;
+			padding-bottom: 3rem;
+		}
+	}
+</style>

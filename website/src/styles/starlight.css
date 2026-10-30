@@ -1,0 +1,30 @@
+/* Flipper's picker palette applied to Starlight's tokens. These rules are
+   unlayered, so they beat Starlight's layered defaults in both themes: every
+   token set for dark must be set again for light. */
+:root {
+	--sl-color-accent-low: #1c2a42;
+	--sl-color-accent: #5b82c4;
+	--sl-color-accent-high: #c7d9ff;
+	--sl-color-black: #0b0f17;
+	--sl-color-gray-6: #151b28;
+	--sl-color-gray-5: #263043;
+	--sl-color-gray-4: #4c5a70;
+	--sl-color-gray-3: #8190a6;
+	--sl-color-gray-2: #b6c1d2;
+	--sl-color-gray-1: #e9eef6;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #dce8fb;
+	--sl-color-accent: #2a4e83;
+	--sl-color-accent-high: #1b365f;
+	--sl-color-white: #182333;
+	--sl-color-black: #ffffff;
+	--sl-color-gray-1: #202b38;
+	--sl-color-gray-2: #3a4757;
+	--sl-color-gray-3: #546174;
+	--sl-color-gray-4: #778396;
+	--sl-color-gray-5: #d8dee9;
+	--sl-color-gray-6: #eef1f5;
+	--sl-color-gray-7: #f6f7f9;
+}

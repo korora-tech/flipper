@@ -1,0 +1,66 @@
+---
+title: Local overrides
+description: How Flipper saves changes when Home Manager owns config.yaml.
+---
+
+When `config.yaml` is a symlink, as when Home Manager links it from the Nix store, Flipper treats it as
+managed and never writes to it. Changes made in the settings window, with the picker's **Always** and
+**Always ask** actions, or with `--suspend` and `--resume` go to `overrides.yaml` in the same directory
+instead.
+
+`--register`, `--uninstall` and `--import` refuse to run on a managed configuration, because Home Manager owns
+`mimeapps.list` and `config.yaml`.
+
+## Format
+
+`overrides.yaml` uses the same version and keys as `config.yaml`, except that every field is optional and
+`overrides` is not allowed:
+
+```yaml
+version: 1
+routing:
+  suspended: true
+rules:
+  - name: Personal GitHub
+    domains: [github.com]
+    action: open
+    profile: firefox:abcd1234.default-release#container-1
+```
+
+## How overrides merge
+
+| Key | Merge |
+| --- | --- |
+| `rules` | Override rules run before every base rule |
+| `appearance.*`, `routing.*` | A field set in the overrides wins |
+| `browsers.hidden` | Union |
+| `browsers.order` | Override entries first, then the remaining base order |
+| `custom_browsers` | Merged by `id`; the override wins |
+
+If `overrides.yaml` is invalid, or makes the merged configuration invalid, Flipper ignores it and shows a
+warning.
+
+Without a managed `config.yaml`, edits still go to `config.yaml`, and Flipper removes any override that would
+hide them.
+
+## In the settings window
+
+Managed rules carry a Home Manager tag. Local rules can be removed, and each page's reset button restores the
+managed value of any setting you have overridden.
+
+## Promote overrides into Nix
+
+```sh
+flipper --export-overrides --format nix   # paste into programs.flipper.settings
+flipper --export-overrides                # or print them as YAML
+```
+
+## Disable overrides
+
+```yaml
+overrides:
+  allowed: false
+```
+
+With Home Manager, set `programs.flipper.allowOverrides = false`. Flipper then ignores `overrides.yaml`, the
+settings window is read-only, and the picker's **Always** actions copy the rule as a Nix snippet instead.
