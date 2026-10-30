@@ -7,7 +7,10 @@ export default defineConfig({
 	site: 'https://flipper.korora.tech',
 	trailingSlash: 'ignore',
 	// Writes the Build Output cf deploys; the Worker serves only static assets.
-	adapter: cloudflare(),
+	// A static site needs no KV sessions or Images binding, and prerenders in
+	// Node like a plain Astro build.
+	adapter: cloudflare({ imageService: 'compile', prerenderEnvironment: 'node' }),
+	session: false,
 	integrations: [
 		starlight({
 			title: 'Flipper',
