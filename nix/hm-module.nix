@@ -287,7 +287,7 @@ in
         };
         width = mkOption {
           type = types.numbers.between 320 2400;
-          default = 760;
+          default = 560;
           description = "Picker width in logical pixels.";
         };
       };

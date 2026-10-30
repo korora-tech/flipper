@@ -87,7 +87,7 @@ impl Default for Appearance {
         Self {
             theme: Theme::System,
             dim: true,
-            width: 760.0,
+            width: 560.0,
         }
     }
 }
@@ -759,7 +759,7 @@ pub(crate) mod tests {
             appearance: Appearance {
                 theme: Theme::Dark,
                 dim: true,
-                width: 760.0,
+                width: 560.0,
             },
             rules: vec![rule("example.com", Some("chrome:Default"))],
             browsers: BrowserPreferences {
