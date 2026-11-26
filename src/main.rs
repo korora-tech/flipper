@@ -5,6 +5,7 @@ mod config_io;
 mod launch;
 mod native_host;
 mod nix;
+mod outputs;
 mod registration;
 mod routing;
 mod settings;
