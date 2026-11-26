@@ -110,30 +110,39 @@ pub fn open(
             };
             let url = Some(url);
             let layer = is_wayland_session();
-            let options = window_options(&appearance, layer);
+            let overlay = layer
+                .then(|| crate::outputs::overlay_size(&crate::outputs::logical_sizes()))
+                .flatten();
+            let fills_output = overlay.is_some();
+            let options = window_options(&appearance, layer, overlay);
             let config_layer = config.clone();
             let profiles_layer = profiles.clone();
             let url_layer = url.clone();
             let warning_layer = warning.clone();
             let opened = cx.open_window(options, move |window, cx| {
-                let view = cx.new(|cx| {
+                // The overlay skips gpui-component's Root: layer surfaces report
+                // client-side decorations, so Root would wrap the backdrop in a
+                // window frame (an inset outline and shadow) around the output.
+                cx.new(|cx| {
                     PickerView::new(
                         config_layer,
                         read_only,
                         profiles_layer,
                         url_layer,
                         warning_layer,
+                        fills_output,
                         window,
                         cx,
                     )
-                });
-                cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
+                })
             });
             if opened.is_err() && layer {
-                let fallback = window_options(&appearance, false);
+                let fallback = window_options(&appearance, false, None);
                 let fallback_opened = cx.open_window(fallback, move |window, cx| {
                     let view = cx.new(|cx| {
-                        PickerView::new(config, read_only, profiles, url, warning, window, cx)
+                        PickerView::new(
+                            config, read_only, profiles, url, warning, false, window, cx,
+                        )
                     });
                     cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
                 });
@@ -163,12 +172,17 @@ pub fn apply_theme(theme: Theme, cx: &mut App) {
     }
 }
 
-fn window_options(appearance: &config::Appearance, layer_shell: bool) -> WindowOptions {
+/// `overlay` is the logical output size the layer surface should cover.
+fn window_options(
+    appearance: &config::Appearance,
+    layer_shell: bool,
+    overlay: Option<(u32, u32)>,
+) -> WindowOptions {
     let mut options = WindowOptions {
         titlebar: None,
         window_bounds: Some(WindowBounds::Windowed(Bounds {
             origin: Point::default(),
-            size: size(px(appearance.width + 40.), px(FALLBACK_HEIGHT)),
+            size: picker_window_size(appearance, overlay),
         })),
         app_id: Some("com.korora.Flipper".into()),
         window_background: WindowBackgroundAppearance::Transparent,
@@ -185,6 +199,29 @@ fn window_options(appearance: &config::Appearance, layer_shell: bool) -> WindowO
         });
     }
     options
+}
+
+/// GPUI passes the window size to a layer surface as its requested size, and
+/// the compositor centres a surface of that size on the output. The overlay
+/// therefore asks for the output's logical size; see [`crate::outputs`].
+fn picker_window_size(
+    appearance: &config::Appearance,
+    overlay: Option<(u32, u32)>,
+) -> Size<Pixels> {
+    match overlay {
+        Some((width, height)) => size(px(width as f32), px(height as f32)),
+        None => size(px(appearance.width + 40.), px(FALLBACK_HEIGHT)),
+    }
+}
+
+/// Only a full-output overlay has room to dim around the panel. Any other
+/// window is just the picker, so dimming it would paint a dark rectangle.
+fn backdrop_colour(dim: bool, fills_output: bool, dark: bool) -> u32 {
+    match (dim && fills_output, dark) {
+        (true, true) => 0x080d16d9,
+        (true, false) => 0x17223588,
+        (false, _) => 0x00000000,
+    }
 }
 
 fn is_wayland_session() -> bool {
@@ -205,6 +242,8 @@ struct PickerView {
     selected: usize,
     status: Option<String>,
     warning: Option<String>,
+    /// Drawn as a layer-shell overlay covering the output, with room to dim.
+    fills_output: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -216,6 +255,7 @@ impl PickerView {
         profiles: Vec<BrowserProfile>,
         prepared: Option<PreparedUrl>,
         warning: Option<String>,
+        fills_output: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -244,6 +284,7 @@ impl PickerView {
             selected: 0,
             status: warning.clone(),
             warning,
+            fills_output,
             _subscriptions: subscriptions,
         }
     }
@@ -653,9 +694,11 @@ impl Focusable for PickerView {
 }
 
 impl Render for PickerView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let dark = theme.is_dark();
+        // Root sets these in a normal window; the layer-shell overlay has none.
+        window.set_rem_size(theme.font_size);
         let visible = self.visible_profiles();
         if self.selected >= visible.len() {
             self.selected = visible.len().saturating_sub(1);
@@ -876,11 +919,7 @@ impl Render for PickerView {
                     .child(format!("Config warning: {warning}")),
             );
         }
-        let dim = if self.config.appearance.dim {
-            if dark { 0x080d16d9 } else { 0x17223588 }
-        } else {
-            0x00000000
-        };
+        let dim = backdrop_colour(self.config.appearance.dim, self.fills_output, dark);
         let mut context = KeyContext::default();
         context.add("Flipper");
         if self.query.is_empty() {
@@ -888,6 +927,8 @@ impl Render for PickerView {
         }
         div()
             .size_full()
+            .font_family(theme.font_family.clone())
+            .text_color(theme.foreground)
             .key_context(context)
             .on_action(cx.listener(Self::move_down))
             .on_action(cx.listener(Self::move_up))
@@ -949,8 +990,9 @@ fn shortcut_label(visible_index: usize, bare_digits: bool) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NUMBER_KEYS_CONTEXT, shortcut_label};
-    use gpui_kit::{KeyBindingContextPredicate, KeyContext};
+    use super::{NUMBER_KEYS_CONTEXT, backdrop_colour, picker_window_size, shortcut_label};
+    use crate::config::Appearance;
+    use gpui_kit::{KeyBindingContextPredicate, KeyContext, px};
 
     fn stack(contexts: &[&str]) -> Vec<KeyContext> {
         contexts
@@ -973,5 +1015,26 @@ mod tests {
         assert_eq!(shortcut_label(9, true).as_deref(), Some("0"));
         assert_eq!(shortcut_label(2, false).as_deref(), Some("Ctrl+3"));
         assert_eq!(shortcut_label(10, true), None);
+    }
+
+    #[test]
+    fn layer_shell_overlay_asks_for_the_output_size() {
+        let appearance = Appearance {
+            width: 560.,
+            ..Appearance::default()
+        };
+        let overlay = picker_window_size(&appearance, Some((1600, 1000)));
+        assert_eq!((overlay.width, overlay.height), (px(1600.), px(1000.)));
+        let window = picker_window_size(&appearance, None);
+        assert_eq!(window.width, px(600.));
+    }
+
+    #[test]
+    fn only_the_layer_shell_overlay_is_dimmed() {
+        assert_ne!(backdrop_colour(true, true, true), 0);
+        assert_ne!(backdrop_colour(true, true, false), 0);
+        assert_eq!(backdrop_colour(false, true, true), 0);
+        assert_eq!(backdrop_colour(true, false, true), 0);
+        assert_eq!(backdrop_colour(true, false, false), 0);
     }
 }
